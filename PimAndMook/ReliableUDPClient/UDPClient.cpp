@@ -1,4 +1,3 @@
-// UDPClient.cpp
 #include "../packetize.hpp"
 #include "../timeout.hpp"
 #include "../logger.hpp"
@@ -15,10 +14,8 @@
 #include <vector>
 #include <iostream>
 
-using std::cerr;
-using std::cout;
-using std::string;
-using std::vector;
+using namespace std;
+
 
 namespace wire {
 
@@ -98,13 +95,13 @@ public:
             return 1;
         }
 
-        auto joined = resemble_strict(segs);
+        auto joined = resemble(segs);
         bool ok = writeFile(filename_, joined.first, joined.second);
 
         if (!ok) {
             logger.logError("Cannot write file");
         } else {
-            logger.log("File received successfully! (" + std::to_string(joined.second) + " bytes)");
+            logger.log("File received successfully! (" + to_string(joined.second) + " bytes)");
         }
 
         delete[] joined.first;
@@ -120,7 +117,7 @@ private:
     string serverIp_;
     int port_{};
     string filename_;
-    int windowSize_{}; // ยังไม่ใช้ (เผื่อทำ flow/window control)
+    int windowSize_{}; // ยังไม่ใช้ เผื่อ Sliding Window
     int io_timeout_ms_{3000}; 
 
 private:
@@ -129,7 +126,7 @@ private:
         sock_ = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock_ < 0) { perror("socket"); return false; }
 
-        // เปิดใช้ timeout ต่อการเรียก 
+        // เปิดใช้ timeout  
         set_socket_timeout_ms(sock_, io_timeout_ms_, io_timeout_ms_);
 
         memset(&serverAddr_, 0, sizeof(serverAddr_));
@@ -145,19 +142,19 @@ private:
     }
 
     void cleanClose() {
+        cout << "[Client] Closing socket fd=" << sock_ << endl;
         if (sock_ >= 0) close(sock_);
         sock_ = -1;
     }
 
     // --- protocol steps ---
     bool sendRequest(const string& filename) {
-        // request: HEADER + filename (payload)
         Segment req{};
-        req.header.srcPort = (unsigned short)port_;      // ใส่ไว้เพื่อให้สมบูรณ์ แม้เซิร์ฟเวอร์จะไม่ใช้
+        req.header.srcPort = (unsigned short)port_;      // ยังไม่ใช้
         req.header.desPort = (unsigned short)port_;
         req.header.seqNumber = 0;
         req.header.length = HEADER_SIZE + (unsigned short)filename.size();
-        req.payload = (void*)filename.data(); // ไม่ copy (serialize จะคัดลอกเอง)
+        req.payload = (void*)filename.data(); 
 
         vector<char> wire;
         wire::serializeSegment(&req, wire);
@@ -203,7 +200,6 @@ private:
                 break;
             }
 
-            // ทำสำเนา payload เพราะ buf จะหมดอายุเมื่อวนรอบใหม่
             char* copyBuf = new char[payloadLen];
             memcpy(copyBuf, buf.data() + HEADER_SIZE, payloadLen);
 
@@ -233,16 +229,16 @@ private:
 // ----------------------------------- main -----------------------------------
 int main(int argc, char* argv[]) {
     if (argc < 5) {
-        std::cerr << "Usage: ./Client <server_ip> <port> <filename> <advertised_window> [io_timeout_ms]\n";
+        cerr << "Usage: ./Client <server_ip> <port> <filename> <advertised_window> [io_timeout_ms]\n";
         return 1;
     }
     const char* serverIP  = argv[1];
-    int port              = std::atoi(argv[2]);
+    int port              = atoi(argv[2]);
     const char* filename  = argv[3];
-    int windowSize        = std::atoi(argv[4]);
+    int windowSize        = atoi(argv[4]);
     int io_timeout_ms     = 3000;
     if (argc >= 6) {
-        io_timeout_ms = clamp_timeout_ms(std::atoll(argv[5])); // helper
+        io_timeout_ms = clamp_timeout_ms(atoll(argv[5]));
     }
 
     UdpFileClient client(serverIP, port, filename, windowSize, io_timeout_ms);

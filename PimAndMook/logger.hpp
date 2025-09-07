@@ -2,25 +2,27 @@
 #include <chrono>
 #include <iostream>
 #include <string>
+using namespace chrono;
+using namespace std;
 
 class Logger {
 public:
     Logger() {
-        start_ = std::chrono::steady_clock::now();
+        start = steady_clock::now();
     }
 
-    void log(const std::string& msg) const {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_).count();
-        std::cout << "[" << elapsed << " ms] " << msg << std::endl;
+    void log(const string& msg) const {
+        auto now = steady_clock::now();
+        auto passed = duration_cast<milliseconds>(now - start).count();
+        cout << "[" << passed << " ms] " << msg << endl;
     }
 
-    void logError(const std::string& msg) const {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_).count();
-        std::cerr << "[" << elapsed << " ms] ERROR: " << msg << std::endl;
+    void logError(const string& msg) const {
+        auto now = steady_clock::now();
+        auto passed = duration_cast<milliseconds>(now - start).count();
+        cerr << "[" << passed << " ms] ERROR: " << msg << endl;
     }
 
 private:
-    std::chrono::steady_clock::time_point start_;
+    steady_clock::time_point start;
 };
