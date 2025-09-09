@@ -1,251 +1,248 @@
-#include "../packetize.hpp"
-#include "../timeout.hpp"
-#include "../logger.hpp"
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <cerrno>
+#include "../header/UDPServer.h"
 
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <string>
-#include <vector>
-
-using namespace std;
-
-namespace wire {
-
-// --- Serializer: แปลง Segment -> contiguous bytes (network byte order) ---
-static inline void serializeSegment(const Segment* seg, vector<char>& out) {
-    unsigned short n_src = htons(seg->header.srcPort);
-    unsigned short n_des = htons(seg->header.desPort);
-    unsigned short n_len = htons(seg->header.length);
-    unsigned short n_chk = htons(seg->header.checkSum);
-    unsigned int   n_seq = htonl(seg->header.seqNumber);
-
-    out.resize(seg->header.length);
-    char* w = out.data();
-
-    memcpy(w + 0,  &n_src, 2);
-    memcpy(w + 2,  &n_des, 2);
-    memcpy(w + 4,  &n_len, 2);
-    memcpy(w + 6,  &n_chk, 2);
-    memcpy(w + 8,  &n_seq, 4);
-
-    int payloadLen = seg->header.length - HEADER_SIZE;
-    if (payloadLen > 0 && seg->payload) {
-        memcpy(w + HEADER_SIZE, seg->payload, payloadLen);
-    }
+void UDPServer::displayError(const char *errorMsg)
+{
+    cerr << "Error: " << errorMsg << endl;
+    exit(1);
 }
 
-// --- Parser: ดึง header + payload (เฉพาะกรณีรับ request ชื่อไฟล์) ---
-struct ParsedHeader {
-    unsigned short srcPort{};
-    unsigned short desPort{};
-    unsigned short length{};
-    unsigned short checkSum{};
-    unsigned int   seqNumber{};
-};
-
-static inline bool parseHeader(const char* buf, int nBytes, ParsedHeader& out) {
-    if (nBytes < HEADER_SIZE) return false;
-
-    unsigned short h_src, h_des, h_len, h_chk;
-    unsigned int   h_seq;
-    memcpy(&h_src, buf + 0, 2);
-    memcpy(&h_des, buf + 2, 2);
-    memcpy(&h_len, buf + 4, 2);
-    memcpy(&h_chk, buf + 6, 2);
-    memcpy(&h_seq, buf + 8, 4);
-
-    out.srcPort  = ntohs(h_src);
-    out.desPort  = ntohs(h_des);
-    out.length   = ntohs(h_len);
-    out.checkSum = ntohs(h_chk);
-    out.seqNumber= ntohl(h_seq);
-
-    return (out.length >= HEADER_SIZE && out.length <= nBytes);
+void UDPServer::createSocket()
+{
+    serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (serverSocket < 0)
+        displayError("The server socket could not be opened!");
 }
 
-} // namespace wire
+void UDPServer::bindAddress(int portNumber)
+{
+    int leng = sizeof(serverAddress);
+    bzero(&serverAddress, leng);
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_port = htons(portNumber);
+    serverAddress.sin_addr.s_addr = INADDR_ANY;
 
-// ------------------------------- UDP File Server -------------------------------
-class UdpFileServer {
-public:
-    UdpFileServer(int port, int advertisedWindow, int io_timeout_ms)
-        : port_(port), windowSize_(advertisedWindow), io_timeout_ms_(io_timeout_ms) {}
+    if (bind(serverSocket, (struct sockaddr *)&serverAddress, leng) < 0)
+        displayError("There is some problem while binding the server socket to an address!");
+}
 
-    int run() { 
-        Logger logger;
+void UDPServer::setClientSockLength()
+{
+    clientSockLen = sizeof(struct sockaddr_in);
+}
 
-        if (!openAndBind()) return 1;
-        logger.log("Server listening on port " + to_string(port_) +
-                   " (io_timeout=" + to_string(io_timeout_ms_) + " ms)");
+int UDPServer::receiveRequest()
+{
+    int noOfCharacters = recvfrom(serverSocket, &segment, sizeof(segment), 0, 
+                                  (struct sockaddr *)&clientAddress, &clientSockLen);
+    if (noOfCharacters < 0)
+        displayError("There is some problem in receiving the request!");
+    return noOfCharacters;
+}
 
-        for (;;) {
-            string filename;
-            if (!receiveFilename(filename)) {
-                continue;
-            }
-            logger.log("Client requested file: " + filename);
+int UDPServer::getFileSize(const char *filename)
+{
+    ifstream file(filename, ios_base::binary);
+    if (!file)
+        return -1;
+    file.seekg(0, ios_base::end);
+    int size = file.tellg();
+    file.close();
+    return size;
+}
 
-            if (!sendFile(filename)) {
-                logger.logError("sendFile failed for: " + filename);
-                continue;
-            }
-            logger.log("File sent successfully! (" + to_string(lastFileSize_) + " bytes)");
-        }
-        cleanClose();
-        return 0;
+char* UDPServer::getRequestedContent()
+{
+    fileSize = getFileSize(segment.data);
+    if (fileSize < 0)
+        displayError("File Not Found");
+
+    char *fileContent = new char[fileSize];
+    ifstream readFile(segment.data, ios_base::binary);
+    readFile.read(fileContent, fileSize);
+    return fileContent;
+}
+
+UDPServer::reliableUDPData UDPServer::setHeader(int seqNo, int ackNo, int flag, char *datagram)
+{
+    reliableUDPData udpData;
+    udpData.sequenceNumber = seqNo;
+    udpData.ackNumber = ackNo;
+    udpData.ackFlag = flag;
+    strcpy(udpData.data, datagram);
+    return udpData;
+}
+
+void UDPServer::sendSegment(reliableUDPData seg)
+{
+    cout << "Sending packet with sequence number: " << seg.sequenceNumber << endl;
+    int no = sendto(serverSocket, &seg, sizeof(seg), 0, (struct sockaddr *)&clientAddress, clientSockLen);
+    if (no < 0)
+        displayError("There is some problem in sending the segment!");
+}
+
+UDPServer::reliableUDPData UDPServer::receiveAck()
+{
+    reliableUDPData ack;
+    int no = recvfrom(serverSocket, &ack, sizeof(ack), 0, (struct sockaddr *)&clientAddress, &clientSockLen);
+    if (no < 0)
+        displayError("There is some problem in receiving the segment!");
+    cout << "Received Acknowledgement " << ack.ackNumber 
+         << " for sequence number " << ack.sequenceNumber << endl;
+    return ack;
+}
+
+struct timeval UDPServer::calculateTimeout(struct timeval t1, struct timeval t2)
+{
+    double alpha = 0.125, beta = 0.25;
+    sampleRTT.tv_sec = t2.tv_sec - t1.tv_sec;
+    sampleRTT.tv_usec = t2.tv_usec - t1.tv_usec;
+
+    estimatedRTT.tv_sec = ((1 - alpha) * estimatedRTT.tv_sec + alpha * sampleRTT.tv_sec);
+    estimatedRTT.tv_usec = ((1 - alpha) * estimatedRTT.tv_usec + alpha * sampleRTT.tv_usec);
+
+    devRTT.tv_sec = ((1 - beta) * devRTT.tv_sec + beta * abs(sampleRTT.tv_sec - estimatedRTT.tv_sec));
+    devRTT.tv_usec = ((1 - beta) * devRTT.tv_usec + beta * abs(sampleRTT.tv_usec - estimatedRTT.tv_usec));
+
+    timeoutInterval.tv_sec = estimatedRTT.tv_sec + 4 * devRTT.tv_sec;
+    timeoutInterval.tv_usec = estimatedRTT.tv_usec + 4 * devRTT.tv_usec;
+
+    return timeoutInterval;
+}
+
+void UDPServer::createSegments(char *fileContent, int windowSize)
+{
+    int noOfSegments = fileSize / mss;
+    char seg[mss];
+    uint32_t seqNo = 0;
+    uint32_t ackNo = segment.sequenceNumber + 1;
+    int ackFlag = 0;
+
+    int senderBufferLen = noOfSegments + 1;
+    reliableUDPData *senderBuffer = new reliableUDPData[senderBufferLen];
+
+    for (int j = 0; j < noOfSegments; j++)
+    {
+        for (int i = j * mss, k = 0; i < (j + 1) * mss && k < mss; i++, k++)
+            seg[k] = fileContent[i];
+
+        senderBuffer[j] = setHeader(seqNo, ackNo, ackFlag, seg);
+        seqNo++;
     }
 
-private:
-    int sock_{-1};
-    sockaddr_in serverAddr_{};
-    sockaddr_in clientAddr_{};
-    socklen_t addrLen_{sizeof(clientAddr_)};
-    int port_{};
-    int windowSize_{}; // ยังไม่ใช้ เผื่อ Sliding Window
-    int lastFileSize_{0};
-    int io_timeout_ms_{3000};  
+    int rem = fileSize % mss;
+    for (int s = 0; s < rem; s++)
+        seg[s] = fileContent[noOfSegments * mss + s];
 
-private:
-    // เปิด socket + bind
-    bool openAndBind() {
-        sock_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock_ < 0) {
-            perror("socket"); //if error, show "socket: <system error message>"
-            return false;
+    senderBuffer[noOfSegments] = setHeader(seqNo, ackNo, ackFlag, seg);
+    slidingWindow(senderBuffer, senderBufferLen, windowSize);
+}
+
+void UDPServer::slidingWindow(reliableUDPData *senderBuffer, int senderBufferLen, int windowSize)
+{
+    uint32_t firstUnAck = 0, nxtSeqNo = 0, dupAckCnt;
+    reliableUDPData ack;
+    cout << "No of segments to be sent: " << senderBufferLen << endl;
+
+    int cwnd = 1;
+    int ssthresh = 64000;
+    int segmentSize = sizeof(senderBuffer[0]);
+    int noOfSegmentsInWin = windowSize / segmentSize;
+
+    cout << "No of segments in window " << noOfSegmentsInWin << endl;
+
+    int dropPercent = 60;
+    int noOfPacketsToDrop = (dropPercent * noOfSegmentsInWin) / 100;
+    cout << "No of packets to drop " << noOfPacketsToDrop << endl;
+
+    uint32_t *packetsToDrop = new uint32_t[noOfPacketsToDrop];
+    estimatedRTT.tv_sec = 0; estimatedRTT.tv_usec = 0;
+    devRTT.tv_sec = 0; devRTT.tv_usec = 0;
+    timeoutInterval.tv_sec = 2; timeoutInterval.tv_usec = 0;
+
+    fd_set fds;
+    int val = 1;
+    struct timeval t1, t2;
+
+    while (nxtSeqNo < (uint32_t)senderBufferLen)
+    {
+        if (firstUnAck == 0 && nxtSeqNo == 0)
+        {
+            srand(time(NULL));
+            for (int i = 0; i < noOfPacketsToDrop; i++)
+                packetsToDrop[i] = rand() % (noOfSegmentsInWin - 1) + 1;
         }
 
-        // เปิดใช้ timeout 
-        set_socket_timeout_ms(sock_, /*recv_ms*/ 3000, /*send_ms*/ 3000);
+        int minimumSize = (cwnd < noOfSegmentsInWin) ? cwnd : noOfSegmentsInWin;
+        gettimeofday(&t1, NULL);
 
-        memset(&serverAddr_, 0, sizeof(serverAddr_));
-        serverAddr_.sin_family = AF_INET;
-        serverAddr_.sin_addr.s_addr = INADDR_ANY;
-        serverAddr_.sin_port = htons(port_);
+        while (nxtSeqNo < firstUnAck + (uint32_t)minimumSize && nxtSeqNo < (uint32_t)senderBufferLen)
+        {
+            if (nxtSeqNo == (uint32_t)senderBufferLen - 1)
+                senderBuffer[nxtSeqNo].ackFlag = 1;
 
-        if (bind(sock_, (sockaddr*)&serverAddr_, sizeof(serverAddr_)) < 0) {
-            perror("bind");
-            close(sock_);
-            sock_ = -1;
-            return false;
+            bool flag = true;
+            for (int i = 0; i < noOfPacketsToDrop; i++)
+                if (nxtSeqNo == packetsToDrop[i]) flag = false;
+
+            if (flag)
+                sendSegment(senderBuffer[nxtSeqNo]);
+
+            nxtSeqNo++;
         }
-        return true;
-    }
 
-    void cleanClose() {
-        if (sock_ >= 0) close(sock_);
-        sock_ = -1;
-    }
+        dupAckCnt = 0;
+        FD_ZERO(&fds);
+        FD_SET(serverSocket, &fds);
+        val = select(serverSocket + 1, &fds, NULL, NULL, &timeoutInterval);
 
-    bool receiveFilename(string& filename) {
-        while (true) {
-            char reqBuf[HEADER_SIZE + 1024] = {0};
-            int n = recvfrom(sock_, reqBuf, sizeof(reqBuf), 0,
-                            (sockaddr*)&clientAddr_, &addrLen_);
-            if (n <= 0) {
-                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                    // ไม่มีrequestในรอบนี้ → รอใหม่
-                    continue;
-                } else {
-                    perror("recvfrom");
-                    return false; // error
+        if (val == 0)
+        {
+            ssthresh = (cwnd * segmentSize) / 2;
+            cwnd = 1;
+            timeoutInterval.tv_sec *= 2;
+            timeoutInterval.tv_usec *= 2;
+            continue;
+        }
+        if (val == -1)
+            displayError("There is some problem in receiving the segment!");
+
+        if (FD_ISSET(serverSocket, &fds) && val == 1)
+        {
+            ack = receiveAck();
+            gettimeofday(&t2, NULL);
+
+            if (ack.ackNumber < nxtSeqNo)
+            {
+                dupAckCnt++;
+                while (dupAckCnt < 3)
+                {
+                    ack = receiveAck();
+                    dupAckCnt++;
                 }
+                for (int i = 0; i < noOfPacketsToDrop; i++)
+                    if (ack.ackNumber == packetsToDrop[i])
+                        packetsToDrop[i] = UINT32_MAX;
             }
 
-            wire::ParsedHeader hdr;
-            if (!wire::parseHeader(reqBuf, n, hdr)) {
-                cerr << "Bad request (invalid header/length)\n";
-                // จะ continue รอใหม่ หรือ return false ก็ได้
-                return false;
+            if (dupAckCnt < 3 && minimumSize == cwnd)
+            {
+                if ((cwnd * segmentSize) >= ssthresh)
+                {
+                    cout << "Congestion Avoidance" << endl;
+                    cwnd = cwnd + 1;
+                }
+                else
+                {
+                    cout << "Slow Start" << endl;
+                    cwnd = cwnd * 2;
+                }
+                timeoutInterval = calculateTimeout(t1, t2);
             }
 
-            int nameBytes = hdr.length - HEADER_SIZE;
-            if (nameBytes <= 0) { cerr << "Empty filename\n"; return false; }
-
-            filename.assign(reqBuf + HEADER_SIZE, reqBuf + HEADER_SIZE + nameBytes);
-            return true;
+            firstUnAck = ack.ackNumber;
+            nxtSeqNo = ack.ackNumber;
         }
     }
 
-    bool sendFile(const string& filename) {
-        auto rf = readFile(filename);
-        if (!rf.first || rf.second <= 0) {
-            cerr << "Cannot open file: " << filename << "\n";
-            return false;
-        }
-
-        char* fileData = rf.first;
-        int   fileSize = rf.second;
-        lastFileSize_ = fileSize;
-
-        vector<Segment*> segs = packetize((void*)fileData, fileSize, MAX_PAYLOAD_SIZE);
-
-        bool ok = true;
-        for (auto* seg : segs) {
-            fillSegmentAddress(*seg);
-            if (!sendSegment(*seg)) {
-                ok = false;
-                break;
-            }
-        }
-
-        if (ok) {
-            Segment fin{};
-            fin.header.srcPort   = (unsigned short)port_;
-            fin.header.desPort   = ntohs(clientAddr_.sin_port); 
-            fin.header.length    = HEADER_SIZE;
-            fin.header.seqNumber = (unsigned int)segs.size();
-            if (!sendSegment(fin)) ok = false;
-        }
-
-        delete[] fileData;
-        for (auto* s : segs) delete s;
-
-        return ok;
-    }
-
-    void fillSegmentAddress(Segment& seg) const {
-        seg.header.srcPort = (unsigned short)port_;
-        seg.header.desPort = ntohs(clientAddr_.sin_port); 
-    }
-
-    bool sendSegment(const Segment& seg) {
-        vector<char> wireBuf;
-        wire::serializeSegment(&seg, wireBuf);
-        int sent = sendto(sock_, wireBuf.data(), (int)wireBuf.size(), 0,
-                          (sockaddr*)&clientAddr_, addrLen_);
-        if (sent < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                cerr << "[Server] send timeout\n";
-            } else {
-                perror("sendto");
-            }
-            return false;
-        }
-        return true;
-    }
-};
-
-// ----------------------------------- main -----------------------------------
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        cerr << "Usage: ./Server <port> <advertised_window> [io_timeout_ms]\n";
-        return 1;
-    }
-    int port = atoi(argv[1]);
-    int windowSize = atoi(argv[2]);
-    int io_timeout_ms = 3000;
-    if (argc >= 4) {
-        io_timeout_ms = clamp_timeout_ms(atoll(argv[3]));
-    }
-
-    UdpFileServer server(port, windowSize, io_timeout_ms);
-    return server.run();
+    cout << "File Sent Successfully" << endl;
 }
-

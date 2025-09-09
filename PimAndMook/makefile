@@ -1,6 +1,15 @@
-all:
-	g++ -o ReliableUDPServer/Server ReliableUDPServer/UDPServer.cpp
-	g++ -o ReliableUDPClient/Client ReliableUDPClient/UDPClient.cpp
+CXX = g++
+CXXFLAGS = -Wall -std=c++11
+
+all: Server Client
+
+Server: main/main_server.cpp ReliableUDPServer/UDPServer.cpp
+	$(CXX) $(CXXFLAGS) -o ReliableUDPServer/Server \
+	    main/main_server.cpp ReliableUDPServer/UDPServer.cpp
+
+Client: main/main_client.cpp ReliableUDPClient/UDPClient.cpp
+	$(CXX) $(CXXFLAGS) -o ReliableUDPClient/Client \
+	    main/main_client.cpp ReliableUDPClient/UDPClient.cpp
+
 clean:
-	rm -f Server
-	rm -f Client
+	rm -f ReliableUDPServer/Server ReliableUDPClient/Client
