@@ -22,6 +22,8 @@ void UDPClient::createSocket()
   	{
 		displayError("The server socket could not be opened!");
 	}
+	else
+        cout << "[Client] Socket OPENED" << endl;
 }
 
 /**
@@ -50,6 +52,11 @@ void UDPClient::setServerAddress(int portNo)
 	serverAddress.sin_family = AF_INET;
 	bcopy((char *)host->h_addr,(char *)&serverAddress.sin_addr.s_addr,host->h_length);
 	serverAddress.sin_port = htons(portNo);
+}
+
+void UDPClient::closeSocket() {
+    close(clientSocket);
+    cout << "[Client] Socket CLOSED" << endl;
 }
 
 /**

@@ -11,6 +11,8 @@ void UDPServer::createSocket()
     serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
     if (serverSocket < 0)
         displayError("The server socket could not be opened!");
+	else
+        cout << "[Server] Socket OPENED" << endl;
 }
 
 void UDPServer::bindAddress(int portNumber)
@@ -23,6 +25,13 @@ void UDPServer::bindAddress(int portNumber)
 
     if (bind(serverSocket, (struct sockaddr *)&serverAddress, leng) < 0)
         displayError("There is some problem while binding the server socket to an address!");
+	else
+        cout << "[Server] Socket BOUND to port " << portNumber << endl;
+}
+
+void UDPServer::closeSocket() {
+    close(serverSocket);
+    cout << "[Server] Socket CLOSED" << endl;
 }
 
 void UDPServer::setClientSockLength()

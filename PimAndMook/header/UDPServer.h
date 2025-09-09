@@ -52,6 +52,7 @@ public:
     reliableUDPData setHeader(int seqNo, int ackNo, int flag, char *datagram);
     void sendSegment(reliableUDPData seg);
     reliableUDPData receiveAck();
+    void closeSocket();
 };
 
 #endif

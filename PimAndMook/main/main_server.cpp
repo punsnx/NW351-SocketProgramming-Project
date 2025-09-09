@@ -13,9 +13,13 @@ int main(int noOfArguments,char *argumentList[])
     server.setClientSockLength();
     while(1)
     {
+        cout << "[Server] Waiting for client request..." << endl;
         server.receiveRequest();
         char* fileContent = server.getRequestedContent();
+        cout << "[Server] Start sending file: " << server.segment.data << endl;
         server.createSegments(fileContent, atoi(argumentList[2]));
+        cout << "[Server] File transfer completed" << endl;
     }
+    server.closeSocket();
     return 0;
 }

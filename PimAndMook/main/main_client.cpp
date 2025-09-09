@@ -14,5 +14,8 @@ int main(int noOfArguments,char *argumentList[])
     client.createRequest(argumentList[3]);
     client.sendRequest();
     client.readResponse(atoi(argumentList[4]), argumentList[3]);
+
+    cout << "[Client] File received successfully" << endl;
+    client.closeSocket();
     return 0;
 }

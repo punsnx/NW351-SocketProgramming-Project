@@ -41,6 +41,7 @@ public:
     void readResponse(int windowSize, char *outputFile);
     void sendAck(reliableUDPData segment);
     void writeToFile(reliableUDPData *response, int receiveBufferInd, char *filename);
+    void closeSocket();
 };
 
 #endif
