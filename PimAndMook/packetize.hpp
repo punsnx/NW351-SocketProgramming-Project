@@ -5,10 +5,8 @@
 #include <cstring>
 using namespace std;
 #define HEADER_SIZE 12
-#define MAX_PAYLOAD_SIZE 1         
-//#define MAX_PAYLOAD_SIZE 1450
+#define MAX_PAYLOAD_SIZE 1       
 //UDP header
-#pragma pack(push, 1)
 typedef struct _Header {
     unsigned short srcPort;
     unsigned short desPort;
@@ -16,7 +14,6 @@ typedef struct _Header {
     unsigned short checkSum;  
     unsigned int seqNumber;
 } Header;
-#pragma pack(pop)
 
 typedef struct _Segment {
     Header header;
@@ -25,24 +22,23 @@ typedef struct _Segment {
 
 pair<char*,int> readFile(string fileName) {
     ifstream file(fileName);
-    //ifstream file(fileName, ios::binary);
     if (!file.is_open()) 
-        //return {nullptr, 0};
         return pair<char*,int>(0,0);
     file.seekg(0,ios::end);
     streamsize fsize = file.tellg();
     file.seekg(0,ios::beg);
-    char* s = (fsize > 0) ? new char[fsize] : nullptr;
-    if (fsize > 0) file.read(s, fsize);
+
+    char *s = new char[fsize];
+    file.read(s,fsize);
+
      return pair<char*,int>(s,fsize);
 }
 
 bool writeFile(string fileName,char *payload,int fileSize){
-    //ofstream file(fileName, ios::binary);
     ofstream file(fileName);
-    if (!file.is_open()) return false;
-    if (fileSize > 0) file.write(payload, fileSize);
-    return true;
+    if(!file.is_open()) 
+    if file.write(payload, fileSize);
+ 
 }
 
 Segment *createSegment(void *payload,int part,int length){
