@@ -385,4 +385,4 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/c++,c,python,java,windows,macos,linux,visualstudiocode,vim
 
-Explain
+.vscode/
