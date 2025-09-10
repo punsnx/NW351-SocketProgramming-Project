@@ -8,6 +8,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <cstdlib>
+#include <cstdint>
+#include <cstring>
 #include <unistd.h>
 #include <string.h>
 #include <fstream>

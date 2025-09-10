@@ -77,7 +77,7 @@ UDPServer::reliableUDPData UDPServer::setHeader(int seqNo, int ackNo, int flag, 
     udpData.sequenceNumber = seqNo;
     udpData.ackNumber = ackNo;
     udpData.ackFlag = flag;
-    strcpy(udpData.data, datagram);
+    memcpy(udpData.data, datagram, mss); 
     return udpData;
 }
 
@@ -122,29 +122,32 @@ void UDPServer::createSegments(char *fileContent, int windowSize)
 {
     int noOfSegments = fileSize / mss;
     char seg[mss];
+    int rem = fileSize % mss;
     uint32_t seqNo = 0;
     uint32_t ackNo = segment.sequenceNumber + 1;
     int ackFlag = 0;
 
-    int senderBufferLen = noOfSegments + 1;
+    int senderBufferLen = (rem == 0) ? noOfSegments : (noOfSegments + 1);
     reliableUDPData *senderBuffer = new reliableUDPData[senderBufferLen];
 
     for (int j = 0; j < noOfSegments; j++)
     {
-        for (int i = j * mss, k = 0; i < (j + 1) * mss && k < mss; i++, k++)
-            seg[k] = fileContent[i];
-
+        memcpy(seg, fileContent + j * mss, mss);
         senderBuffer[j] = setHeader(seqNo, ackNo, ackFlag, seg);
         seqNo++;
     }
 
-    int rem = fileSize % mss;
-    for (int s = 0; s < rem; s++)
-        seg[s] = fileContent[noOfSegments * mss + s];
+    if (rem > 0)
+    {
+        char lastSeg[mss];
+        memcpy(lastSeg, fileContent + noOfSegments * mss, rem);
+        seg[rem] = '\0';   // กันเผื่อเวลา client ใช้ strlen
+        senderBuffer[noOfSegments] = setHeader(seqNo, ackNo, ackFlag, seg);
+    }
 
-    senderBuffer[noOfSegments] = setHeader(seqNo, ackNo, ackFlag, seg);
     slidingWindow(senderBuffer, senderBufferLen, windowSize);
 }
+
 
 void UDPServer::slidingWindow(reliableUDPData *senderBuffer, int senderBufferLen, int windowSize)
 {

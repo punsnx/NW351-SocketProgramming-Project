@@ -225,11 +225,20 @@ void UDPClient::sendAck(reliableUDPData segment)
 void UDPClient::writeToFile(reliableUDPData* response,int receiveBufferInd,char* filename)
 {
 	ofstream writeFile;
-  	writeFile.open(filename);
-	for(int i=0;i<receiveBufferInd-1;i++)
+  	writeFile.open(filename, ios::binary);
+	if (!writeFile) {
+        displayError("Unable to open output file");
+    }
+	for(int i=0; i<receiveBufferInd-1; i++)
 	{
-		writeFile<<response[i].data;
+		writeFile.write(response[i].data, sizeof(response[i].data));
 	}
+	if (receiveBufferInd > 0) {
+        int last = receiveBufferInd - 1;
+    	size_t lastSize = strlen(response[last].data); 
+        writeFile.write(response[last].data, lastSize);
+    }
+
 	cout<<"File Transfered Successfully "<<endl;
 	writeFile.close();
 }

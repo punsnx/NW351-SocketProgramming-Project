@@ -1,11 +1,13 @@
 #include "../header/UDPServer.h"
 
+static const int kWindowSizeBytes = 5000; 
+
 int main(int noOfArguments,char *argumentList[])
 {
     UDPServer server;
-    if(noOfArguments < 3)
+    if(noOfArguments < 2)
     {
-        server.displayError("The client must provide a port number!");
+        server.displayError("Usage: server <port>");
     }
     server.createSocket();
     int portNo = atoi(argumentList[1]);
@@ -17,7 +19,7 @@ int main(int noOfArguments,char *argumentList[])
         server.receiveRequest();
         char* fileContent = server.getRequestedContent();
         cout << "[Server] Start sending file: " << server.segment.data << endl;
-        server.createSegments(fileContent, atoi(argumentList[2]));
+        server.createSegments(fileContent, kWindowSizeBytes);
         cout << "[Server] File transfer completed" << endl;
     }
     server.closeSocket();

@@ -1,11 +1,13 @@
 #include "../header/UDPClient.h"
 
+static const int kWindowSizeBytes = 5000;
+
 int main(int noOfArguments,char *argumentList[])
 {
     UDPClient client;
-    if(noOfArguments < 5)
+    if(noOfArguments < 4)
     {
-        client.displayError("Invalid arguments!");
+        client.displayError("Usage: client <server_ip> <port> <filename>");
     }
     client.createSocket();
     int portNo = atoi(argumentList[2]);
@@ -13,7 +15,7 @@ int main(int noOfArguments,char *argumentList[])
     client.setServerAddress(portNo);
     client.createRequest(argumentList[3]);
     client.sendRequest();
-    client.readResponse(atoi(argumentList[4]), argumentList[3]);
+    client.readResponse(kWindowSizeBytes, argumentList[3]);
 
     cout << "[Client] File received successfully" << endl;
     client.closeSocket();
