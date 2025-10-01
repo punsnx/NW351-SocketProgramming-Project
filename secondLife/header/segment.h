@@ -1,8 +1,12 @@
 #ifndef SEGMENT_H
 #define SEGMENT_H
 
-#define HEADER_SIZE 12 //bytes
-#define MAX_PAYLOAD_SIZE 1 //bytes
+// #define HEADER_SIZE 12 //bytes
+// #define MAX_PAYLOAD_SIZE 1 //bytes
+
+#define MAX_PAYLOAD_SIZE 1024
+#define HEADER_SIZE sizeof(Header)
+
 
 //UDP header
 typedef struct _Header{

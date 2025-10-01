@@ -114,37 +114,8 @@ public:
         delete nak; // payload points to stack memory (meta), do not delete
     }
 
-    // Send a segment and wait for ACK; used for the initial request (mirrors server's reliable send)
-    bool sendReliable(Segment* segToSend) {
-        for (int tries = 0; tries < maxRetries; ++tries) {
-            sendSegment(segToSend);
-            // wait for ACK/NAK
-            Segment* resp = receiveSegment();
-            if (!resp) {
-                cerr << "[request] timeout, retry " << (tries+1) << "/" << maxRetries << "\n";
-                continue;
-            }
-
-            unsigned short received = resp->header.checkSum;
-            resp->header.checkSum = 0;
-            unsigned short calc = calculateChecksum(resp);
-            bool ok = (received == calc);
-
-            if (ok && resp->payload) {
-                MetaData* m = (MetaData*)resp->payload;
-                if (m->type == TYPE_ACK) {
-                    // got ACK for our request
-                    delete[] (char*)resp->payload; delete resp;
-                    return true;
-                }
-            }
-            // corrupt or NAK -> retry
-            if (resp->payload) delete[] (char*)resp->payload; delete resp;
-        }
-        return false;
-    }
-
     // ---- protocol ----
+    // reliable send
     bool requestFile(const string& filename, MetaData& outRespMeta) {
         cout << "\n=== Requesting file: " << filename << " ===\n";
 
@@ -153,125 +124,135 @@ public:
         memset(req.filename, 0, sizeof(req.filename));
         strncpy(req.filename, filename.c_str(), sizeof(req.filename) - 1);
 
-        Segment* request = createSegment(&req, /*seq*/0, (int)sizeof(MetaData));
+        Segment* request = createSegment(&req, 0, sizeof(MetaData));
         request->header.checkSum = calculateChecksum(request);
 
-        // Send the request (server expects us to ACK its RESPONSE; we expect nothing here)
+        cout << "[INFO] Sending request for file: " << filename << endl;
         sendSegment(request);
-        delete request; // payload is stack req
+        delete request;
 
-        // Wait for RESPONSE from server and ACK it
-        for (;;) {
+        int expectedSeq = 0;
+        int retryCount = 0;
+
+        while (true) {
             Segment* seg = receiveSegment();
             if (!seg) {
-                // ?????? check timeout
-                if (0)
-                    cerr << "[response] timeout waiting for server RESPONSE\n";
-                    return false;
+                retryCount++;
+                cerr << "[TIMEOUT] Waiting for RESPONSE, retry " << retryCount << "/" << maxRetries
+                    << " (expecting seq " << expectedSeq << ")\n";
+                if (retryCount >= maxRetries) {
+                    cerr << "[ERROR] Max retries exceeded. Aborting.\n";
+                    exit(1);
+                }
+                sendNAK(expectedSeq);
+                continue;
+            }
+            retryCount = 0;
+
+            unsigned short recvChk = seg->header.checkSum;
+            seg->header.checkSum = 0;
+            if (recvChk != calculateChecksum(seg)) {
+                cerr << "[ERROR] RESPONSE checksum mismatch, sending NAK\n";
+                sendNAK(expectedSeq);
+                cleanup(seg);
                 continue;
             }
 
-            // check is Corrupt?
-            unsigned short received = seg->header.checkSum;
-            seg->header.checkSum = 0;
-            unsigned short calc = calculateChecksum(seg);
-            if (received != calc) {
-                cerr << "[response] checksum error, sending NAK\n";
-                // retransmission
-                sendNAK(seg->header.seqNumber);
-                cleanup(seg);
-                continue; // wait again
-            }
-
-            int psize = seg->header.length - HEADER_SIZE;
-            if (psize == (int)sizeof(MetaData) && seg->payload) {
+            if(seg->payload) {
                 MetaData* meta = (MetaData*)seg->payload;
-                if (meta->type == TYPE_RESPONSE) {
-                    // ACK the RESPONSE so server can proceed
+                if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
                     sendACK(seg->header.seqNumber);
-                    outRespMeta = *meta; // copy out for caller
-                    cout << "Server says fileExists=" << boolalpha << meta->fileExists
-                         << ", fileSize=" << meta->fileSize
-                         << ", totalSegments=" << meta->totalSegments
-                         << ", maxPayload=" << meta->maxPayloadSize << "\n";
+                    outRespMeta = *meta;
+                    cout << "[INFO] Server response received: fileExists=" << meta->fileExists
+                        << ", fileSize=" << meta->fileSize
+                        << ", totalSegments=" << meta->totalSegments
+                        << ", maxPayload=" << meta->maxPayloadSize << "\n";
                     cleanup(seg);
                     return true;
                 }
             }
-            // Unexpected packet: NAK and continue
-            cerr << "[response] unexpected packet, NAK and wait\n";
-            sendNAK(seg->header.seqNumber);
+            cerr << "[INFO] Unexpected packet, sending NAK\n";
+            sendNAK(expectedSeq);
             cleanup(seg);
         }
     }
 
     bool receiveFile(const string& filename, int totalSegments) {
-        ofstream ofs(filename, ios::binary);
-        if (!ofs) {
-            cerr << "Cannot open output file: " << filename << "\n";
+        string folder = "clientFiles/";
+        string filepath = folder + filename;
+
+    #if __cplusplus >= 201703L
+        #include <filesystem>
+        if (!std::filesystem::exists(folder)) {
+            std::filesystem::create_directory(folder);
+        }
+    #endif
+
+        ofstream ofs(filepath, ios::binary);
+        if(!ofs) {
+            cerr << "[ERROR] Cannot open file: " << filepath << "\n";
             return false;
         }
 
         int expectedSeq = 0;
         int received = 0;
 
-        cout << "Receiving data segments... expecting " << totalSegments << " segments\n";
+        cout << "[INFO] Receiving file: " << filename << " (" << totalSegments << " segments expected)\n";
 
-        while (true) {
+        while(true) {
             Segment* seg = receiveSegment();
-            if (!seg) {
-                // timeout: ask for retransmission of the expected segment
-                cerr << "[data] timeout, NAK seq " << expectedSeq << "\n";
+            if(!seg) {
+                cerr << "[TIMEOUT] No segment received for seq " << expectedSeq << ", sending NAK\n";
                 sendNAK(expectedSeq);
                 continue;
             }
 
-            unsigned short received = seg->header.checkSum;
+            unsigned short recvChk = seg->header.checkSum;
             seg->header.checkSum = 0;
-            unsigned short calc = calculateChecksum(seg);
-            if (received != calc) {
-                cerr << "[data] checksum error on seq " << seg->header.seqNumber << ", NAK expected " << expectedSeq << "\n";
+            if(recvChk != calculateChecksum(seg)) {
+                cerr << "[ERROR] Segment " << seg->header.seqNumber << " checksum mismatch, sending NAK\n";
                 sendNAK(expectedSeq);
                 cleanup(seg);
                 continue;
             }
 
-            int psize = seg->header.length - HEADER_SIZE;
-            bool isMetaSized = (psize == (int)sizeof(MetaData));
-            if (isMetaSized && seg->payload) {
+            if(seg->payload) {
                 MetaData* meta = (MetaData*)seg->payload;
-                if (meta->type == TYPE_COMPLETE) {
-                    cout << "Got TYPE_COMPLETE. Received segments: " << received << "\n";
-                    // ACK completion (optional)
+                if(meta->type == TYPE_COMPLETE) {
+                    cout << "[INFO] TYPE_COMPLETE received for seq " << seg->header.seqNumber
+                        << ", total received segments: " << received << "\n";
                     sendACK(seg->header.seqNumber);
                     cleanup(seg);
                     break;
                 }
             }
 
-            // Treat as data segment
             int seq = seg->header.seqNumber;
-            if (seq == expectedSeq) {
-                if (psize > 0 && seg->payload) {
-                    ofs.write((char*)seg->payload, psize);
+            if(seq == expectedSeq) {
+                if(seg->payload && seg->header.length > HEADER_SIZE) {
+                    ofs.write((char*)seg->payload, seg->header.length - HEADER_SIZE);
                 }
                 sendACK(seq);
+                cout << "[INFO] Received segment " << seq << ", sent ACK\n";
                 expectedSeq++;
                 received++;
-            } else if (seq < expectedSeq) {
-                // duplicate old segment -> ACK it again so server proceeds
+            } else if(seq < expectedSeq) {
                 sendACK(seq);
+                cout << "[INFO] Duplicate segment " << seq << ", re-ACK sent\n";
             } else {
-                // future segment -> ask for the missing one
                 sendNAK(expectedSeq);
+                cout << "[INFO] Future segment " << seq << ", sent NAK for seq " << expectedSeq << "\n";
             }
+
             cleanup(seg);
         }
 
         ofs.close();
-        cout << "File saved to: " << filename << "\n";
+        cout << "[INFO] File saved to: " << filepath << "\n";
         return true;
     }
+
+
 
 private:
     static void cleanup(Segment* seg) {

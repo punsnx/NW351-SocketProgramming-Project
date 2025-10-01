@@ -242,7 +242,7 @@ private:
         sendSegmentReliable(response);
         
         // cleanup response segment
-        delete[] (char*)response->payload;
+        // delete[] (char*)response->payload;
         delete response;
         
         // if file exists, start sending data
@@ -252,56 +252,55 @@ private:
     }
     
     void sendNextDataSegment() {
-        if(currentSegment >= fileSegments.size()) {
-            cout << "All segments sent!" << endl;
-            
-            // send completion message
-            MetaData completeMeta;
-            completeMeta.type = TYPE_COMPLETE;
-            strcpy(completeMeta.filename, currentFilename.c_str());
-            
-            Segment* complete = createSegment(&completeMeta, currentSegment, sizeof(MetaData));
+        if(currentSegment < fileSegments.size()) {
+            // ส่ง data segment ปกติ
+            Segment* seg = fileSegments[currentSegment];
+            cout << "Sending data segment " << currentSegment 
+                << " (size: " << (seg->header.length - HEADER_SIZE) << " bytes)" << endl;
+            sendSegment(seg);
+        } else if(currentSegment == fileSegments.size()) {
+            // ส่ง TYPE_COMPLETE segment
+            MetaData* completeMetaHeap = new MetaData;
+            completeMetaHeap->type = TYPE_COMPLETE;
+            strcpy(completeMetaHeap->filename, currentFilename.c_str());
+
+            // ส่ง sequence number = currentSegment เพื่อให้ client ตรงกับ expectedSeq
+            Segment* complete = createSegment(completeMetaHeap, currentSegment, sizeof(MetaData));
             complete->header.checkSum = calculateChecksum(complete);
             sendSegment(complete);
-            
-            
+
+            delete[] (char*)complete->payload;
             delete complete;
-            
-            transferActive = false;
-            return;
+
+            cout << "Sent TYPE_COMPLETE for segment " << currentSegment << endl;
         }
-        
-        // get current segment
-        Segment* seg = fileSegments[currentSegment];
-        
-        cout << "Sending data segment " << currentSegment 
-             << " (size: " << (seg->header.length - HEADER_SIZE) << " bytes)" << endl;
-        
-        // send the segment
-        sendSegment(seg);
+        // transferActive ยัง true จนกว่า client จะ ACK TYPE_COMPLETE
     }
+
+
     
     void handleAck(Segment* seg) {
         cout << "Got ACK for segment " << seg->header.seqNumber << endl;
-        
+
         if(seg->header.seqNumber == currentSegment) {
             // correct ACK, move to next segment
             currentSegment++;
-            
-            if(currentSegment < fileSegments.size()) {
-                sendNextDataSegment();
+
+            if(currentSegment <= fileSegments.size()) {
+                sendNextDataSegment(); // ส่ง segment ถัดไป หรือ TYPE_COMPLETE
             } else {
                 cout << "File transfer complete!" << endl;
                 transferActive = false;
                 cleanupSegments();
             }
         } else {
-            // wrong ACK sequence
+            // wrong ACK sequence → resend current segment
             cout << "Wrong ACK sequence. Expected: " << currentSegment 
-                 << ", Got: " << seg->header.seqNumber << endl;
+                << ", Got: " << seg->header.seqNumber << endl;
             sendNextDataSegment();
         }
     }
+
     
     void handleNak(Segment* seg) {
         cout << "Got NAK for segment " << seg->header.seqNumber << endl;

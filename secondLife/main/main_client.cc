@@ -10,7 +10,7 @@ int main(int argc, char* argv[]) {
     int port = atoi(argv[2]);
 
     try {
-        ReliableUDPClient client(serverIp, port); //create socket in constructor
+        ReliableUDPClient client(serverIp, port); //create socket
 
         for (int i = 3; i < argc; ++i) {
             string fname = argv[i];
