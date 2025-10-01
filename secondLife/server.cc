@@ -170,6 +170,7 @@ private:
             
             switch(meta->type) {
                 case TYPE_REQUEST:
+                    sendACK(seg->header.seqNumber);
                     handleFileRequest(seg, meta);
                     break;
                     
@@ -203,21 +204,21 @@ private:
         currentFileSize = fileData.second;
         
         // prepare response metadata
-        MetaData responseMeta;
-        memset(&responseMeta, 0, sizeof(responseMeta));
-        responseMeta.type = TYPE_RESPONSE;
-        strcpy(responseMeta.filename, currentFilename.c_str());
+        MetaData *responseMeta = new MetaData;
+        memset(responseMeta, 0, sizeof(MetaData));
+        responseMeta->type = TYPE_RESPONSE;
+        strcpy(responseMeta->filename, currentFilename.c_str());
         
         if(currentFileSize > 0) {
             // file exists
-            responseMeta.fileExists = true;
-            responseMeta.fileSize = currentFileSize;
-            responseMeta.maxPayloadSize = MAX_PAYLOAD_SIZE;
+            responseMeta->fileExists = true;
+            responseMeta->fileSize = currentFileSize;
+            responseMeta->maxPayloadSize = MAX_PAYLOAD_SIZE;
             
             // create segments for file
             cleanupSegments();
             fileSegments = packetize(currentFileData, currentFileSize, MAX_PAYLOAD_SIZE);
-            responseMeta.totalSegments = fileSegments.size();
+            responseMeta->totalSegments = fileSegments.size();
             
             cout << "File exists! Size: " << currentFileSize << " bytes" << endl;
             cout << "Created " << fileSegments.size() << " segments" << endl;
@@ -226,16 +227,16 @@ private:
             transferActive = true;
         } else {
             // file doesn't exist
-            responseMeta.fileExists = false;
-            responseMeta.fileSize = 0;
-            responseMeta.totalSegments = 0;
+            responseMeta->fileExists = false;
+            responseMeta->fileSize = 0;
+            responseMeta->totalSegments = 0;
             
             cout << "File does not exist!" << endl;
             transferActive = false;
         }
         
         // create response segment
-        Segment* response = createSegment(&responseMeta, 0, sizeof(MetaData));
+        Segment* response = createSegment(responseMeta, 0, sizeof(MetaData));
         response->header.checkSum = calculateChecksum(response);
         
         // send response

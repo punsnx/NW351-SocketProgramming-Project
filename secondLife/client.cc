@@ -133,6 +133,86 @@ public:
 
         int expectedSeq = 0;
         int retryCount = 0;
+        bool serverRespond = false;
+
+        while (true) {
+            Segment* seg = receiveSegment();
+            if (!seg) {
+                retryCount++;
+                cerr << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
+                    << " (expecting seq " << expectedSeq << ")\n";
+                if (retryCount >= maxRetries) {
+                    cerr << "[ERROR] Max retries exceeded. Aborting.\n";
+                    exit(1);
+                }
+                sendNAK(expectedSeq);
+                continue;
+            }
+            retryCount = 0;
+
+            // isCorrupt?
+            unsigned short recvChk = seg->header.checkSum;
+            seg->header.checkSum = 0;
+            if (recvChk != calculateChecksum(seg)) {
+                cerr << "[ERROR] First ACK checksum mismatch, sending NAK\n";
+                sendNAK(expectedSeq);
+                cleanup(seg);
+                continue;
+            }
+
+            // isCorrectSeq?
+            if(seg->header.seqNumber == expectedSeq){
+                if(!serverRespond) { 
+                MetaData* meta = (MetaData*)seg->payload;
+                // isACK?
+                if(meta->type == TYPE_ACK) {
+                    sendACK(seg->header.seqNumber);
+                    outRespMeta = *meta;
+                    cout << "[INFO] Server responsed for First ACK\n";
+                    cleanup(seg);
+                    // return true;
+                    serverRespond = true;
+                    return true;
+                } else {
+                    cerr << "[ERROR] Server did not send First ACK\n";
+                    sendNAK(expectedSeq);
+                    continue;
+                }
+            }
+            }
+            
+            // check type==ack ก่อน ถ้าไม่ ack --> timer until timelimit
+            
+            // if(serverRespond) {
+
+            // else {
+            //     if(seg->payload) {
+            //         MetaData* meta = (MetaData*)seg->payload;
+            //         if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
+            //             sendACK(seg->header.seqNumber);
+            //             outRespMeta = *meta;
+            //             cout << "[INFO] Server response received: fileExists=" << meta->fileExists
+            //                 << ", fileSize=" << meta->fileSize
+            //                 << ", totalSegments=" << meta->totalSegments
+            //                 << ", maxPayload=" << meta->maxPayloadSize << "\n";
+            //             cleanup(seg);
+            //             return true;
+            //         }
+            //     }
+            // }
+
+            cerr << "[INFO] Unexpected packet, sending NAK\n";
+            sendNAK(expectedSeq);
+            cleanup(seg);
+        }
+    }
+
+    bool receiveMeta(const string& filename, MetaData& outRespMeta) {
+        cout << "\n=== Waiting for Metadata from server for file: " << filename << " ===\n";
+
+        int expectedSeq = 0;
+        int retryCount = 0;
+        bool serverRespond = false;
 
         while (true) {
             Segment* seg = receiveSegment();
@@ -148,7 +228,11 @@ public:
                 continue;
             }
             retryCount = 0;
+            
+            
+            //************************* NOTE ... implement is already receive packet ?
 
+            // isCorrupt?
             unsigned short recvChk = seg->header.checkSum;
             seg->header.checkSum = 0;
             if (recvChk != calculateChecksum(seg)) {
@@ -158,25 +242,24 @@ public:
                 continue;
             }
 
-            // check type==ack ก่อน ถ้าไม่ ack --> timer until timelimit
-            if(seg->payload) {
-                MetaData* meta = (MetaData*)seg->payload;
-                if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
-                    sendACK(seg->header.seqNumber);
-                    outRespMeta = *meta;
-                    cout << "[INFO] Server response received: fileExists=" << meta->fileExists
-                        << ", fileSize=" << meta->fileSize
-                        << ", totalSegments=" << meta->totalSegments
-                        << ", maxPayload=" << meta->maxPayloadSize << "\n";
-                    cleanup(seg);
-                    return true;
+            // isCorrectSeq?
+            if(seg->header.seqNumber == expectedSeq){
+                                if(seg->payload) {
+                    MetaData* meta = (MetaData*)seg->payload;
+                    if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
+                        sendACK(seg->header.seqNumber);
+                        outRespMeta = *meta;
+                        cout << "[INFO] Server response received: fileExists=" << meta->fileExists
+                            << ", fileSize=" << meta->fileSize
+                            << ", totalSegments=" << meta->totalSegments
+                            << ", maxPayload=" << meta->maxPayloadSize << "\n";
+                        cleanup(seg);
+                        return true;
+                    }
                 }
             }
-            cerr << "[INFO] Unexpected packet, sending NAK\n";
-            sendNAK(expectedSeq);
-            cleanup(seg);
         }
-    }
+}
 
     bool receiveFile(const string& filename, int totalSegments) {
         string folder = "clientFiles/";
@@ -282,9 +365,11 @@ int main(int argc, char* argv[]) {
                 cerr << "Failed to get RESPONSE for file: " << fname << "\n";
                 continue;
             }
-            if (!resp.fileExists || resp.fileSize <= 0 || resp.totalSegments <= 0) {
-                cout << "Server reports file not found: " << fname << "\n";
-                continue;
+            if (!client.receiveMeta(fname, resp)) {
+                if (!resp.fileExists || resp.fileSize <= 0 || resp.totalSegments <= 0) {
+                    cout << "Server reports file not found: " << fname << "\n";
+                    continue;
+                }
             }
             client.receiveFile(resp.filename[0] ? string(resp.filename) : fname, resp.totalSegments);
         }

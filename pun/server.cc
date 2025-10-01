@@ -170,6 +170,7 @@ private:
             
             switch(meta->type) {
                 case TYPE_REQUEST:
+                    sendACK(seg->header.seqNumber);
                     handleFileRequest(seg, meta);
                     break;
                     

@@ -9,9 +9,10 @@ CLIENT_OBJ = $(CLIENT_SRC:.cc=.o)
 CLIENT_TARGET = client
 
 # Server
-SERVER_SRC = server.cc packetize.cc fileio.cc checksum.cc
+SERVER_SRC = Newserver.cc packetize.cc fileio.cc checksum.cc
 SERVER_OBJ = $(SERVER_SRC:.cc=.o)
 SERVER_TARGET = server
+
 
 all: $(CLIENT_TARGET) $(SERVER_TARGET)
 

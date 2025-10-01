@@ -10,14 +10,21 @@ int main(int argc, char* argv[]) {
     int port = atoi(argv[2]);
 
     try {
-        ReliableUDPClient client(serverIp, port); //create socket
+        ReliableUDPClient client(serverIp, port);
 
         for (int i = 3; i < argc; ++i) {
             string fname = argv[i];
             MetaData resp{};
-            if (!client.requestFile(fname, resp)) {
-                cerr << "Failed to get RESPONSE for file: " << fname << "\n";
-                continue;
+
+            bool sendRequestSucceed = false;
+            while (!sendRequestSucceed) {
+                if(!client.requestFile(fname, resp)) {
+                    cerr << "Failed to get ACK from server for file: " << fname << "\n";
+                    continue;
+                }else {
+                    sendRequestSucceed = true;
+                    cerr << "Got ACK from server for file: " << fname << "\n";
+                }
             }
             if (!resp.fileExists || resp.fileSize <= 0 || resp.totalSegments <= 0) {
                 cout << "Server reports file not found: " << fname << "\n";
