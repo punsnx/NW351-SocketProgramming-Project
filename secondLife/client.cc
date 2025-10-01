@@ -103,6 +103,7 @@ public:
         Segment* ack = createSegment(&meta, seq, (int)sizeof(int));
         ack->header.checkSum = calculateChecksum(ack);
         sendSegment(ack);
+        cout << "Client send ACK for Sequence Number:" << seq << endl;
         delete ack; // payload points to stack memory (meta), do not delete
     }
 
@@ -111,6 +112,7 @@ public:
         Segment* nak = createSegment(&meta, seq, (int)sizeof(int));
         nak->header.checkSum = calculateChecksum(nak);
         sendSegment(nak);
+        cout << "Client send NAK for Sequence Number:" << seq << endl;
         delete nak; // payload points to stack memory (meta), do not delete
     }
 
@@ -168,7 +170,7 @@ public:
                 if(meta->type == TYPE_ACK) {
                     sendACK(seg->header.seqNumber);
                     outRespMeta = *meta;
-                    cout << "[INFO] Server responsed for First ACK\n";
+                    cout << "[INFO] Recieve First ACK from Server\n";
                     cleanup(seg);
                     // return true;
                     serverRespond = true;
@@ -284,6 +286,7 @@ public:
         cout << "[INFO] Receiving file: " << filename << " (" << totalSegments << " segments expected)\n";
 
         while(true) {
+            
             Segment* seg = receiveSegment();
             if(!seg) {
                 cerr << "[TIMEOUT] No segment received for seq " << expectedSeq << ", sending NAK\n";
