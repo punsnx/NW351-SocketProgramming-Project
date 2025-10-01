@@ -93,12 +93,37 @@ public:
             
             if(receivedSeg) {
                 handleSegment(receivedSeg);
-                // delete receivedSeg;
             }
         }
     }
 
 private:
+    // ========== CENTRALIZED CLEANUP FUNCTIONS ==========
+    
+    void deleteSegment(Segment* seg) {
+        if(!seg) return;
+        
+        if(seg->payload) {
+            delete[] (char*)seg->payload;
+            seg->payload = nullptr;
+        }
+        delete seg;
+    }
+    
+    void deleteSegmentKeepPayload(Segment* seg) {
+        if(!seg) return;
+        delete seg;
+    }
+    
+    Segment* createSegmentWithPayload(void* data, int seqNum, int dataSize) {
+        char* payload = new char[dataSize];
+        memcpy(payload, data, dataSize);
+        Segment* seg = createSegment(payload, seqNum, dataSize);
+        return seg;
+    }
+    
+    // ===================================================
+    
     Segment* receiveSegment() {
         // create buffer for receiving
         char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
@@ -161,6 +186,7 @@ private:
         if(receivedChecksum != calculatedChecksum) {
             cout << "Segment corrupt! Sending NAK" << endl;
             sendNAK(seg->header.seqNumber);
+            deleteSegment(seg);
             return;
         }
         
@@ -186,6 +212,8 @@ private:
                     cout << "Unknown type in segment" << endl;
             }
         }
+        
+        deleteSegment(seg);
     }
     
     void handleFileRequest(Segment* seg, MetaData* meta) {
@@ -236,15 +264,13 @@ private:
         }
         
         // create response segment
-        Segment* response = createSegment(&responseMeta, 0, sizeof(MetaData));
+        Segment* response = createSegmentWithPayload(&responseMeta, 0, sizeof(MetaData));
         response->header.checkSum = calculateChecksum(response);
         
         // send response
         sendSegmentReliable(response);
         
-        // cleanup response segment
-        delete response->payload;
-        delete response;
+        deleteSegment(response);
         
         // if file exists, start sending data
         if(transferActive && fileSegments.size() > 0) {
@@ -261,12 +287,11 @@ private:
             completeMeta.type = TYPE_COMPLETE;
             strcpy(completeMeta.filename, currentFilename.c_str());
             
-            Segment* complete = createSegment(&completeMeta, currentSegment, sizeof(MetaData));
+            Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
             complete->header.checkSum = calculateChecksum(complete);
             sendSegment(complete);
             
-            delete complete->payload;
-            delete complete;
+            deleteSegment(complete);
             
             transferActive = false;
             return;
@@ -317,26 +342,24 @@ private:
         MetaData ackMeta;
         ackMeta.type = TYPE_ACK;
         
-        Segment* ack = createSegment(&ackMeta, seqNum, sizeof(int));
+        Segment* ack = createSegmentWithPayload(&ackMeta, seqNum, sizeof(MetaData));
         ack->header.checkSum = calculateChecksum(ack);
         
         sendSegment(ack);
         
-        delete ack->payload;
-        delete ack;
+        deleteSegment(ack);
     }
     
     void sendNAK(int seqNum) {
         MetaData nakMeta;
         nakMeta.type = TYPE_NAK;
         
-        Segment* nak = createSegment(&nakMeta, seqNum, sizeof(int));
+        Segment* nak = createSegmentWithPayload(&nakMeta, seqNum, sizeof(MetaData));
         nak->header.checkSum = calculateChecksum(nak);
         
         sendSegment(nak);
         
-        delete nak->payload;
-        delete nak;
+        deleteSegment(nak);
     }
     
     bool sendSegmentReliable(Segment* seg) {
@@ -366,8 +389,7 @@ private:
                     MetaData* meta = (MetaData*)response->payload;
                     if(meta->type == TYPE_ACK) {
                         cout << "Got ACK!" << endl;
-                        delete response->payload;
-                        delete response;
+                        deleteSegment(response);
                         return true;
                     } else if(meta->type == TYPE_NAK) {
                         cout << "Got NAK, retrying..." << endl;
@@ -376,8 +398,7 @@ private:
                     cout << "Corrupt response, retrying..." << endl;
                 }
                 
-                delete response->payload;
-                delete response;
+                deleteSegment(response);
             } else {
                 cout << "Timeout, retrying..." << endl;
             }
@@ -392,7 +413,7 @@ private:
     void cleanupSegments() {
         for(auto seg : fileSegments) {
             // don't delete payload as it points to file buffer
-            delete seg;
+            deleteSegmentKeepPayload(seg);
         }
         fileSegments.clear();
     }
