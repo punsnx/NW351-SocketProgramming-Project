@@ -158,6 +158,7 @@ public:
                 continue;
             }
 
+            // check type==ack ก่อน ถ้าไม่ ack --> timer until timelimit
             if(seg->payload) {
                 MetaData* meta = (MetaData*)seg->payload;
                 if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
