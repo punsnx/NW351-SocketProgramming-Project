@@ -1,17 +1,4 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cstring>
-#include <string>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <sys/time.h>
-
-#include "header/project-header.h"      // expects Header, Segment, MAX_PAYLOAD_SIZE, HEADER_SIZE
-#include "header/packetize.h"           // for createSegment()
-#include "header/checksum.h"            // for calculateChecksum()
+#include "header/client.h"
 
 using namespace std;
 
@@ -138,10 +125,10 @@ public:
                 continue;
             }
 
-            unsigned short rx = resp->header.checkSum;
+            unsigned short received = resp->header.checkSum;
             resp->header.checkSum = 0;
             unsigned short calc = calculateChecksum(resp);
-            bool ok = (rx == calc);
+            bool ok = (received == calc);
 
             if (ok && resp->payload) {
                 MetaData* m = (MetaData*)resp->payload;
@@ -177,14 +164,20 @@ public:
         for (;;) {
             Segment* seg = receiveSegment();
             if (!seg) {
-                cerr << "[response] timeout waiting for server RESPONSE\n";
-                return false;
+                // ?????? check timeout
+                if (0)
+                    cerr << "[response] timeout waiting for server RESPONSE\n";
+                    return false;
+                continue;
             }
-            unsigned short rx = seg->header.checkSum;
+
+            // check is Corrupt?
+            unsigned short received = seg->header.checkSum;
             seg->header.checkSum = 0;
             unsigned short calc = calculateChecksum(seg);
-            if (rx != calc) {
+            if (received != calc) {
                 cerr << "[response] checksum error, sending NAK\n";
+                // retransmission
                 sendNAK(seg->header.seqNumber);
                 cleanup(seg);
                 continue; // wait again
@@ -233,10 +226,10 @@ public:
                 continue;
             }
 
-            unsigned short rx = seg->header.checkSum;
+            unsigned short received = seg->header.checkSum;
             seg->header.checkSum = 0;
             unsigned short calc = calculateChecksum(seg);
-            if (rx != calc) {
+            if (received != calc) {
                 cerr << "[data] checksum error on seq " << seg->header.seqNumber << ", NAK expected " << expectedSeq << "\n";
                 sendNAK(expectedSeq);
                 cleanup(seg);
