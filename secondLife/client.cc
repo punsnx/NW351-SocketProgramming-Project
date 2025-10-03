@@ -82,7 +82,8 @@ public:
 
     Segment* receiveSegment() {
         char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
-        sockaddr_in from{}; socklen_t fromLen = sizeof(from);
+        sockaddr_in from{}; 
+        socklen_t fromLen = sizeof(from);
         int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
         if (n <= 0) return nullptr; // timeout or error
 
@@ -95,6 +96,7 @@ public:
         } else {
             seg->payload = nullptr;
         }
+        cout << "--->> Client receive segment of Sequence Number: " << seg->header.seqNumber << endl;
         return seg;
     }
 
@@ -103,7 +105,7 @@ public:
         Segment* ack = createSegment(&meta, seq, (int)sizeof(int));
         ack->header.checkSum = calculateChecksum(ack);
         sendSegment(ack);
-        cout << "Client send ACK for Sequence Number:" << seq << endl;
+        cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
         delete ack; // payload points to stack memory (meta), do not delete
     }
 
@@ -246,12 +248,12 @@ public:
 
             // isCorrectSeq?
             if(seg->header.seqNumber == expectedSeq){
-                                if(seg->payload) {
+                if(seg->payload) {
                     MetaData* meta = (MetaData*)seg->payload;
-                    if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
+                    if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {                
                         sendACK(seg->header.seqNumber);
                         outRespMeta = *meta;
-                        cout << "[INFO] Server response received: fileExists=" << meta->fileExists
+                        cout << "[INFO] Server response: fileExists=" << meta->fileExists
                             << ", fileSize=" << meta->fileSize
                             << ", totalSegments=" << meta->totalSegments
                             << ", maxPayload=" << meta->maxPayloadSize << "\n";
@@ -283,7 +285,7 @@ public:
         int expectedSeq = 0;
         int received = 0;
 
-        cout << "[INFO] Receiving file: " << filename << " (" << totalSegments << " segments expected)\n";
+        cout << "\n=== Receiving file: " << filename << " (" << totalSegments << " segments expected) ===\n";
 
         while(true) {
             
@@ -319,16 +321,17 @@ public:
                 if(seg->payload && seg->header.length > HEADER_SIZE) {
                     ofs.write((char*)seg->payload, seg->header.length - HEADER_SIZE);
                 }
-                sendACK(seq);
                 cout << "[INFO] Received segment " << seq << ", sent ACK\n";
+                sendACK(seq);
                 expectedSeq++;
                 received++;
             } else if(seq < expectedSeq) {
-                sendACK(seq);
+                cout << "[LOG] Receive Sequence Number: " << seq << ", but Expected for Sequence Number: " << expectedSeq << endl;
                 cout << "[INFO] Duplicate segment " << seq << ", re-ACK sent\n";
+                sendACK(seq);
             } else {
-                sendNAK(expectedSeq);
                 cout << "[INFO] Future segment " << seq << ", sent NAK for seq " << expectedSeq << "\n";
+                sendNAK(expectedSeq);
             }
 
             cleanup(seg);
