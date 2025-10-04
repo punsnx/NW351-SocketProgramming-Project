@@ -169,6 +169,7 @@ public:
                 // isACK?
                 if(meta->type == TYPE_ACK) {
                     sendACK(seg->header.seqNumber);
+                    cout << "sendACK " << seg->header.seqNumber << endl; 
                     outRespMeta = *meta;
                     cout << "[INFO] Recieve First ACK from Server\n";
                     cleanup(seg);
