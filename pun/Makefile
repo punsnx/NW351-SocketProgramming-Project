@@ -1,12 +1,23 @@
 CC = g++
 CFLAGS = -Wall -std=c++11
-TARGET = a.out
-SOURCES = server.cc file-handler.cc checksum.cc packetize.cc
 
-$(TARGET): $(SOURCES)
-	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
+# SERVER
+SERVER_TARGET = server.out
+SERVER_SOURCES = server-newlife.cc file-handler.cc checksum.cc packetize.cc
 
-# clean:
-# 	rm -f $(TARGET)
+# CLIENT
+CLIENT_TARGET = client.out
+CLIENT_SOURCES = client.cc file-handler.cc checksum.cc packetize.cc
 
-# .PHONY: clean
+.PHONY: all server client clean
+
+all: server client
+
+server: $(SERVER_SOURCES)
+	$(CC) $(CFLAGS) $(SERVER_SOURCES) -o $(SERVER_TARGET)
+
+client: $(CLIENT_SOURCES)
+	$(CC) $(CFLAGS) $(CLIENT_SOURCES) -o $(CLIENT_TARGET)
+
+clean:
+	rm -f $(SERVER_TARGET) $(CLIENT_TARGET)

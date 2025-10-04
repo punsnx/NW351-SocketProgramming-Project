@@ -2,23 +2,6 @@
 
 using namespace std;
 
-// Message types (aligned with server.cc)
-#define TYPE_REQUEST  1
-#define TYPE_RESPONSE 2
-#define TYPE_DATA     3   // not used by server for data payloads, but kept for completeness
-#define TYPE_ACK      4
-#define TYPE_NAK      5
-#define TYPE_COMPLETE 6
-
-struct MetaData {
-    int type;                 // TYPE_*
-    char filename[256];       // requested/serving file name
-    bool fileExists;          // server response: file present?
-    int fileSize;             // bytes
-    int totalSegments;        // how many segments server created
-    int windowSize;           // optional (not used in stop-and-wait server)
-    int maxPayloadSize;       // MAX_PAYLOAD_SIZE announced by server
-};
 
 class ReliableUDPClient {
 private:
@@ -171,7 +154,6 @@ public:
                 // isACK?
                 if(meta->type == TYPE_ACK) {
                     sendACK(seg->header.seqNumber);
-                    cout << "sendACK " << seg->header.seqNumber << endl; 
                     outRespMeta = *meta;
                     cout << "[INFO] Recieve First ACK from Server\n";
                     cleanup(seg);

@@ -10,22 +10,6 @@
 
 using namespace std;
 
-#define TYPE_REQUEST 1
-#define TYPE_RESPONSE 2
-#define TYPE_DATA 3
-#define TYPE_ACK 4
-#define TYPE_NAK 5
-#define TYPE_COMPLETE 6
-
-struct MetaData {
-    int type;
-    char filename[256];
-    bool fileExists;
-    int fileSize;
-    int totalSegments;
-    int windowSize;
-    int maxPayloadSize;
-};
 
 class ReliableUDPServer {
 private:
@@ -36,11 +20,13 @@ private:
     
     // file transfer state
     vector<Segment*> fileSegments;
-    char* currentFileData;      // store file data
-    int currentFileSize;        // size of current file
-    int currentSegment;         // which segment we're sending
-    bool transferActive;        // are we transferring?
-    string currentFilename;     // name of current file
+    char* currentFileData;      
+    int currentFileSize;       
+    int currentSegment;        
+    bool transferActive;        
+
+    string serverFilePath;
+    string currentFilename;     
     
     // server config
     int port;
@@ -57,6 +43,7 @@ public:
         serverSocket = -1;
         currentFileData = nullptr;
         currentFileSize = 0;
+        serverFilePath = "Files/";
         
         cout << "=== Simple UDP Server ===" << endl;
         cout << "Port: " << port << endl;
@@ -149,6 +136,8 @@ private:
         } else {
             seg->payload = nullptr;
         }
+
+        cout << "--->> Server receive segment at Sequence Number: " << seg->header.seqNumber << endl;
         
         return seg;
     }
@@ -171,11 +160,13 @@ private:
         sendto(serverSocket, buffer, totalSize, 0,
                (sockaddr*)&clientAddr, clientLen);
         
+        cout << "<<---Server sent segment at Sequence Number: " << seg->header.seqNumber << endl;
+        
         delete[] buffer;
     }
     
     void handleSegment(Segment* seg) {
-        cout << "\nReceived segment - Seq: " << seg->header.seqNumber 
+        cout << "[handleSegment()] Received segment - Seq: " << seg->header.seqNumber 
              << ", Length: " << seg->header.length << endl;
         
         // verify checksum
@@ -227,7 +218,7 @@ private:
         }
         
         // read file using your function
-        pair<char*, int> fileData = readFile(currentFilename);
+        pair<char*, int> fileData = readFile(serverFilePath + currentFilename);
         currentFileData = fileData.first;
         currentFileSize = fileData.second;
         
@@ -268,17 +259,32 @@ private:
         response->header.checkSum = calculateChecksum(response);
         
         // send response
+        cout << "=== Sent Metadata to Client ===" << endl;
         sendSegmentReliable(response);
         
         deleteSegment(response);
         
         // if file exists, start sending data
         if(transferActive && fileSegments.size() > 0) {
+            cout << "\n=== Sending file data to Client by sendNextDataSegment() ===" << endl;
             sendNextDataSegment();
+        } else {
+            // file doesn't exist, send TYPE_COMPLETE immediately
+            MetaData completeMeta;
+            completeMeta.type = TYPE_COMPLETE;
+            strcpy(completeMeta.filename, currentFilename.c_str());
+
+            Segment* complete = createSegmentWithPayload(&completeMeta, 0, sizeof(MetaData));
+            complete->header.checkSum = calculateChecksum(complete);
+            sendSegment(complete);
+            cout << "\n=== File doesn't exist, send TYPE_COMPLETE to Client ===" << endl;
+
+            deleteSegment(complete);
         }
     }
     
     void sendNextDataSegment() {
+        cout << "[sendNextDataSegment] ";
         if(currentSegment >= fileSegments.size()) {
             cout << "All segments sent!" << endl;
             
@@ -346,6 +352,7 @@ private:
         ack->header.checkSum = calculateChecksum(ack);
         
         sendSegment(ack);
+        cout << "Server send ACK for Sequence Number: " << seqNum << endl;
         
         deleteSegment(ack);
     }
@@ -358,6 +365,7 @@ private:
         nak->header.checkSum = calculateChecksum(nak);
         
         sendSegment(nak);
+        cout << "Server send NAK for Sequence Number: " << seqNum << endl;
         
         deleteSegment(nak);
     }
