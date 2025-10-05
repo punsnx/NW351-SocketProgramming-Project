@@ -1,343 +1,414 @@
-// client_multi.cc
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
-#include <cstring>
-#include <chrono>
-#include <map>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-
-#include "header/project-header.h"  // ต้องมี Header, Segment, MAX_PAYLOAD_SIZE, HEADER_SIZE,
-// และฟังก์ชัน createSegment(Segment* or factory), calculateChecksum(Segment*)
+#include "header/client.h"
 
 using namespace std;
 
-// ---- ต้องให้สอดคล้องกับ server.cc / diagram ----
+// Message types (aligned with server.cc)
 #define TYPE_REQUEST  1
 #define TYPE_RESPONSE 2
-#define TYPE_DATA     3
+#define TYPE_DATA     3   // not used by server for data payloads, but kept for completeness
 #define TYPE_ACK      4
 #define TYPE_NAK      5
 #define TYPE_COMPLETE 6
 
 struct MetaData {
-    int  type;
-    char filename[256];
-    bool fileExists;
-    int  fileSize;
-    int  totalSegments;
-    int  windowSize;
-    int  maxPayloadSize;
+    int type;                 // TYPE_*
+    char filename[256];       // requested/serving file name
+    bool fileExists;          // server response: file present?
+    int fileSize;             // bytes
+    int totalSegments;        // how many segments server created
+    int windowSize;           // optional (not used in stop-and-wait server)
+    int maxPayloadSize;       // MAX_PAYLOAD_SIZE announced by server
 };
 
 class ReliableUDPClient {
-public:
-    ReliableUDPClient(const string& ip, int port, int timeoutSec = 1, int maxRetries = 3)
-        : serverIp(ip), serverPort(port), timeoutSeconds(timeoutSec), maxRetries(maxRetries) {
-        sockfd = -1;
-        memset(&serverAddr, 0, sizeof(serverAddr));
-    }
-
-    bool init() {
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sockfd < 0) {
-            cerr << "Error: cannot create socket\n";
-            return false;
-        }
-        serverAddr.sin_family = AF_INET;
-        serverAddr.sin_port   = htons(serverPort);
-        if (inet_pton(AF_INET, serverIp.c_str(), &serverAddr.sin_addr) <= 0) {
-            cerr << "Error: invalid server ip\n";
-            return false;
-        }
-        return true;
-    }
-
-    bool requestAndDownload(const string& filename) {
-        // 1) ส่งคำขอ
-        MetaData req{};
-        req.type = TYPE_REQUEST;
-        strncpy(req.filename, filename.c_str(), sizeof(req.filename)-1);
-
-        Segment* seg = createSegment(&req, /*seq*/0, sizeof(MetaData));
-        seg->header.checkSum = 0;
-        seg->header.checkSum = calculateChecksum(seg);
-        if (!sendSegment(seg)) { 
-            cleanup(seg);
-            cerr << "[REQ] send failed for '" << filename << "'\n";
-            return false;
-        }
-        cleanup(seg);
-
-        // 2) รอ RESPONSE
-        MetaData resp{};
-        int respSeq = -1;
-        if (!waitResponse(resp, respSeq)) {
-            cerr << "[RES] invalid/missing RESPONSE for '" << filename << "'\n";
-            return false;
-        }
-        // ACK RESPONSE เพื่อให้เซิร์ฟเวอร์เริ่มส่งข้อมูล
-        sendACK(respSeq);
-
-        if (!resp.fileExists) {
-            cout << "Server: file not found → " << filename << "\n";
-            return false;
-        }
-
-        // 3) เตรียมเขียนไฟล์
-        ofstream out(filename, ios::binary);
-        if (!out) {
-            cerr << "Error: cannot open output '" << filename << "'\n";
-            return false;
-        }
-        cout << "Downloading '" << filename << "' "
-             << "(size=" << resp.fileSize
-             << ", segments=" << resp.totalSegments
-             << ", maxPayload=" << resp.maxPayloadSize << ")\n";
-
-        // 4) รับ DATA/COMPLETE
-        int expectedSeq = 0;
-        int writtenBytes = 0;
-
-        timeval tv{.tv_sec = timeoutSeconds, .tv_usec = 0};
-        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-        // Receive packet p
-        while (true) {
-            Segment* inSeg = receiveSegment();
-            if (!inSeg) {
-                // timeout
-                cerr << "Timeout waiting seq=" << expectedSeq
-                     << " for '" << filename << "' → NAK\n";
-                sendNAK(expectedSeq);
-                continue;
-            }
-
-            // Is Corrupt?
-            unsigned short recvCsum = inSeg->header.checkSum;
-            inSeg->header.checkSum = 0;
-            unsigned short calcCsum = calculateChecksum(inSeg);
-
-            if (recvCsum != calcCsum) {
-                cerr << "Corrupt segment (seq=" << inSeg->header.seqNumber
-                     << ") for '" << filename << "' → NAK\n";
-                sendNAK(expectedSeq);
-                cleanup(inSeg);
-                continue;
-            }
-
-            // COMPLETE?
-            bool isComplete = false;
-            int psize = inSeg->header.length - HEADER_SIZE;
-            if (psize >= (int)sizeof(MetaData) && inSeg->payload) {
-                MetaData* meta = (MetaData*)inSeg->payload;
-                if (meta->type == TYPE_COMPLETE) {
-                    isComplete = true;
-                }
-            }
-
-            if (isComplete) {
-                sendACK(inSeg->header.seqNumber);
-                cleanup(inSeg);
-                cout << "Completed '" << filename << "' (" << writtenBytes << " bytes)\n";
-                break;
-            }
-
-            //isCorrect Seq?
-            int seq = inSeg->header.seqNumber;
-            if (seq == expectedSeq) {
-                if (psize > 0 && inSeg->payload) {
-                    out.write(inSeg->payload, psize);
-                    writtenBytes += psize;
-                }
-                sendACK(seq);
-                expectedSeq++;
-            } else {
-                cerr << "Out-of-order for '" << filename
-                     << "': expected=" << expectedSeq << " got=" << seq << " → NAK\n";
-                sendNAK(expectedSeq);
-            }
-
-            cleanup(inSeg);
-        }
-
-        out.close();
-        return true;
-    }
-
 private:
     int sockfd;
-    sockaddr_in serverAddr;
-    socklen_t addrLen = sizeof(serverAddr);
-    string serverIp;
-    int serverPort;
-    int timeoutSeconds;
-    int maxRetries;
+    sockaddr_in serverAddr{};
+    socklen_t serverLen{};
 
-    // ----- I/O primitives -----
-    bool sendRaw(const char* buf, int len) {
-        int n = sendto(sockfd, buf, len, 0, (sockaddr*)&serverAddr, addrLen);
-        return n == len;
+    int timeoutSec = 1;   // default 1s; can be tuned
+    int maxRetries = 5;   // retry for requests/NAKs
+
+public:
+    ReliableUDPClient(const string& serverIp, int port) {
+        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sockfd < 0) {
+            perror("socket");
+            throw runtime_error("Cannot create socket");
+        }
+
+        memset(&serverAddr, 0, sizeof(serverAddr));
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons(port);
+        if (inet_pton(AF_INET, serverIp.c_str(), &serverAddr.sin_addr) != 1) {
+            throw runtime_error("Invalid server IP");
+        }
+        serverLen = sizeof(serverAddr);
+
+        // set default recv timeout
+        setRecvTimeout(timeoutSec);
+
+        cout << "=== Simple UDP Client ===\n";
+        cout << "Server: " << serverIp << ":" << port << "\n";
+        cout << "MAX_PAYLOAD_SIZE (local compile-time): " << MAX_PAYLOAD_SIZE << " bytes\n";
+        cout << "HEADER_SIZE: " << HEADER_SIZE << " bytes\n";
     }
 
-    bool sendSegment(Segment* seg) {
+    ~ReliableUDPClient() {
+        if (sockfd >= 0) close(sockfd);
+    }
+
+    void setRecvTimeout(int seconds) {
+        timeval tv{};
+        tv.tv_sec = seconds;
+        tv.tv_usec = 0;
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
+
+    // ---- wire helpers ----
+    void sendSegment(Segment* seg) {
         int totalSize = seg->header.length;
-        vector<char> buf(totalSize);
-        memcpy(buf.data(), &seg->header, sizeof(Header));
-        int psize = totalSize - HEADER_SIZE;
-        if (psize > 0 && seg->payload) {
-            memcpy(buf.data() + sizeof(Header), seg->payload, psize);
+        char* buffer = new char[totalSize];
+
+        memcpy(buffer, &seg->header, sizeof(Header));
+        int payloadSize = seg->header.length - HEADER_SIZE;
+        if (payloadSize > 0 && seg->payload) {
+            memcpy(buffer + sizeof(Header), seg->payload, payloadSize);
         }
-        return sendRaw(buf.data(), totalSize);
+
+        sendto(sockfd, buffer, totalSize, 0, (sockaddr*)&serverAddr, serverLen);
+        delete[] buffer;
     }
 
     Segment* receiveSegment() {
-        char buf[sizeof(Header) + MAX_PAYLOAD_SIZE];
-        int n = recvfrom(sockfd, buf, sizeof(buf), 0, (sockaddr*)&serverAddr, &addrLen);
-        if (n <= 0) return nullptr;
+        char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
+        sockaddr_in from{}; 
+        socklen_t fromLen = sizeof(from);
+        int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
+        if (n <= 0) return nullptr; // timeout or error
 
         Segment* seg = new Segment;
-        memcpy(&seg->header, buf, sizeof(Header));
-        int psize = seg->header.length - HEADER_SIZE;
-        if (psize > 0) {
-            seg->payload = new char[psize];
-            memcpy(seg->payload, buf + sizeof(Header), psize);
+        memcpy(&seg->header, buffer, sizeof(Header));
+        int payloadSize = seg->header.length - HEADER_SIZE;
+        if (payloadSize > 0) {
+            seg->payload = new char[payloadSize];
+            memcpy(seg->payload, buffer + sizeof(Header), payloadSize);
         } else {
             seg->payload = nullptr;
         }
+        cout << "--->> Client receive segment of Sequence Number: " << seg->header.seqNumber << endl;
         return seg;
     }
 
-    // ----- helpers -----
-    void sendACK(int seqNum) {
-        MetaData m{}; m.type = TYPE_ACK;
-        Segment* ack = createSegment(&m, seqNum, sizeof(int));
-        ack->header.checkSum = 0;
+    void sendACK(int seq) {
+        MetaData meta{}; meta.type = TYPE_ACK;
+        Segment* ack = createSegment(&meta, seq, (int)sizeof(int));
         ack->header.checkSum = calculateChecksum(ack);
         sendSegment(ack);
-        cleanup(ack);
+        cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
+        delete ack; // payload points to stack memory (meta), do not delete
     }
 
-    void sendNAK(int seqNum) {
-        MetaData m{}; m.type = TYPE_NAK;
-        Segment* nak = createSegment(&m, seqNum, sizeof(int));
-        nak->header.checkSum = 0;
+    void sendNAK(int seq) {
+        MetaData meta{}; meta.type = TYPE_NAK;
+        Segment* nak = createSegment(&meta, seq, (int)sizeof(int));
         nak->header.checkSum = calculateChecksum(nak);
         sendSegment(nak);
-        cleanup(nak);
+        cout << "Client send NAK for Sequence Number:" << seq << endl;
+        delete nak; // payload points to stack memory (meta), do not delete
     }
 
-    bool waitResponse(MetaData& outMeta, int& outSeq) {
-        timeval tv{.tv_sec = timeoutSeconds, .tv_usec = 0}; //set timeout
-        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    // ---- protocol ----
+    // reliable send
+    bool requestFile(const string& filename, MetaData& outRespMeta) {
+        cout << "\n=== Requesting file: " << filename << " ===\n";
 
-        const int expectedRespSeq = 0; //++
+        MetaData req{};
+        req.type = TYPE_REQUEST;
+        memset(req.filename, 0, sizeof(req.filename));
+        strncpy(req.filename, filename.c_str(), sizeof(req.filename) - 1);
 
-        int tries = 0;
-        //limit timeout
-        while (tries < maxRetries) {
+        Segment* request = createSegment(&req, 0, sizeof(MetaData));
+        request->header.checkSum = calculateChecksum(request);
+
+        cout << "[INFO] Sending request for file: " << filename << endl;
+        sendSegment(request);
+        delete request;
+
+        int expectedSeq = 0;
+        int retryCount = 0;
+        bool serverRespond = false;
+
+        while (true) {
             Segment* seg = receiveSegment();
-            //timeout?
             if (!seg) {
-                cerr << "Timeout waiting RESPONSE (" << (tries+1) << "/" << maxRetries << ")\n";
-                tries++;
+                retryCount++;
+                cerr << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
+                    << " (expecting seq " << expectedSeq << ")\n";
+                if (retryCount >= maxRetries) {
+                    cerr << "[ERROR] Max retries exceeded. Aborting.\n";
+                    exit(1);
+                }
+                sendNAK(expectedSeq);
                 continue;
             }
+            retryCount = 0;
 
-            //Is Corrupt?
-            unsigned short recvCsum = seg->header.checkSum;
+            // isCorrupt?
+            unsigned short recvChk = seg->header.checkSum;
             seg->header.checkSum = 0;
-            unsigned short calcCsum = calculateChecksum(seg);
-            if (recvCsum != calcCsum) {
-                cerr << "Corrupt RESPONSE → NAK\n";
-                sendNAK(expectedRespSeq); // sendNAK(seg->header.seqNumber); //++
+            if (recvChk != calculateChecksum(seg)) {
+                cerr << "[ERROR] First ACK checksum mismatch, sending NAK\n";
+                sendNAK(expectedSeq);
                 cleanup(seg);
-                tries++;
                 continue;
             }
 
-            //isCorrect Seq?
-            if (seg->header.seqNumber != expectedRespSeq) {
-                cerr << "Unexpected RESPONSE seq=" << seg->header.seqNumber
-                    << " (expected " << expectedRespSeq << ") → NAK\n";
-                sendNAK(expectedRespSeq);
-                cleanup(seg);
-                tries++;
-                continue;
+            // isCorrectSeq?
+            if(seg->header.seqNumber == expectedSeq){
+                if(!serverRespond) { 
+                MetaData* meta = (MetaData*)seg->payload;
+                // isACK?
+                if(meta->type == TYPE_ACK) {
+                    sendACK(seg->header.seqNumber);
+                    outRespMeta = *meta;
+                    cout << "[INFO] Recieve First ACK from Server\n";
+                    cleanup(seg);
+                    // return true;
+                    serverRespond = true;
+                    return true;
+                } else {
+                    cerr << "[ERROR] Server did not send First ACK\n";
+                    sendNAK(expectedSeq);
+                    continue;
+                }
+            }
             }
             
+            // check type==ack ก่อน ถ้าไม่ ack --> timer until timelimit
+            
+            // if(serverRespond) {
 
-            // isAck ?
-            int psize = seg->header.length - HEADER_SIZE;
-            if (psize < (int)sizeof(MetaData) || !seg->payload) {
-                cerr << "RESPONSE payload too small → NAK\n";
-                sendNAK(expectedRespSeq);
-                cleanup(seg);
-                tries++;
-                continue;
-            }
+            // else {
+            //     if(seg->payload) {
+            //         MetaData* meta = (MetaData*)seg->payload;
+            //         if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {
+            //             sendACK(seg->header.seqNumber);
+            //             outRespMeta = *meta;
+            //             cout << "[INFO] Server response received: fileExists=" << meta->fileExists
+            //                 << ", fileSize=" << meta->fileSize
+            //                 << ", totalSegments=" << meta->totalSegments
+            //                 << ", maxPayload=" << meta->maxPayloadSize << "\n";
+            //             cleanup(seg);
+            //             return true;
+            //         }
+            //     }
+            // }
 
-            MetaData* meta = (MetaData*)seg->payload;
-            if (meta->type != TYPE_RESPONSE) {
-                cerr << "Unexpected first packet (not TYPE_RESPONSE) → NAK\n";
-                sendNAK(expectedRespSeq);
-                cleanup(seg);
-                tries++;
-                continue;
-            }
-
-            // Pass
-            outMeta = *meta;
-            outSeq  = seg->header.seqNumber; // จะเป็น 0 ตาม expectedRespSeq
+            cerr << "[INFO] Unexpected packet, sending NAK\n";
+            sendNAK(expectedSeq);
             cleanup(seg);
-            return true;
         }
-        return false;
     }
 
-    void cleanup(Segment* seg) {
+    bool receiveMeta(const string& filename, MetaData& outRespMeta) {
+        cout << "\n=== Waiting for Metadata from server for file: " << filename << " ===\n";
+
+        int expectedSeq = 0;
+        int retryCount = 0;
+        bool serverRespond = false;
+
+        while (true) {
+            Segment* seg = receiveSegment();
+            if (!seg) {
+                retryCount++;
+                cerr << "[TIMEOUT] Waiting for RESPONSE, retry " << retryCount << "/" << maxRetries
+                    << " (expecting seq " << expectedSeq << ")\n";
+                if (retryCount >= maxRetries) {
+                    cerr << "[ERROR] Max retries exceeded. Aborting.\n";
+                    exit(1);
+                }
+                sendNAK(expectedSeq);
+                continue;
+            }
+            retryCount = 0;
+            
+            
+            //************************* NOTE ... implement is already receive packet ?
+
+            // isCorrupt?
+            unsigned short recvChk = seg->header.checkSum;
+            seg->header.checkSum = 0;
+            if (recvChk != calculateChecksum(seg)) {
+                cerr << "[ERROR] RESPONSE checksum mismatch, sending NAK\n";
+                sendNAK(expectedSeq);
+                cleanup(seg);
+                continue;
+            }
+
+            // isCorrectSeq?
+            if(seg->header.seqNumber == expectedSeq){
+                if(seg->payload) {
+                    MetaData* meta = (MetaData*)seg->payload;
+                    if(meta->type == TYPE_RESPONSE && seg->header.seqNumber == expectedSeq) {                
+                        sendACK(seg->header.seqNumber);
+                        outRespMeta = *meta;
+                        cout << "[INFO] Server response: fileExists=" << meta->fileExists
+                            << ", fileSize=" << meta->fileSize
+                            << ", totalSegments=" << meta->totalSegments
+                            << ", maxPayload=" << meta->maxPayloadSize << "\n";
+                        cleanup(seg);
+                        return true;
+                    }
+                }
+            }
+        }
+}
+
+    bool receiveFile(const string& filename, int totalSegments) {
+        string folder = "clientFiles/";
+        string filepath = folder + filename;
+
+    #if __cplusplus >= 201703L
+        #include <filesystem>
+        if (!std::filesystem::exists(folder)) {
+            std::filesystem::create_directory(folder);
+        }
+    #endif
+
+        ofstream ofs(filepath, ios::binary);
+        if(!ofs) {
+            cerr << "[ERROR] Cannot open file: " << filepath << "\n";
+            return false;
+        }
+
+        int expectedSeq = 0;
+        int received = 0;
+
+        cout << "\n=== Receiving file: " << filename << " (" << totalSegments << " segments expected) ===\n";
+
+        while(true) {
+            
+            Segment* seg = receiveSegment();
+            if(!seg) {
+                cerr << "[TIMEOUT] No segment received for seq " << expectedSeq << ", sending NAK\n";
+                sendNAK(expectedSeq);
+                continue;
+            }
+
+            unsigned short recvChk = seg->header.checkSum;
+            seg->header.checkSum = 0;
+            if(recvChk != calculateChecksum(seg)) {
+                cerr << "[ERROR] Segment " << seg->header.seqNumber << " checksum mismatch, sending NAK\n";
+                sendNAK(expectedSeq);
+                cleanup(seg);
+                continue;
+            }
+
+            if(seg->payload) {
+                MetaData* meta = (MetaData*)seg->payload;
+                if(meta->type == TYPE_COMPLETE) {
+                    cout << "[INFO] TYPE_COMPLETE received for seq " << seg->header.seqNumber
+                        << ", total received segments: " << received << "\n";
+                    sendACK(seg->header.seqNumber);
+                    cleanup(seg);
+                    break;
+                }
+            }
+
+            int seq = seg->header.seqNumber;
+            if(seq == expectedSeq) {
+                if(seg->payload && seg->header.length > HEADER_SIZE) {
+                    ofs.write((char*)seg->payload, seg->header.length - HEADER_SIZE);
+                }
+                cout << "[INFO] Received segment " << seq << ", sent ACK\n";
+                sendACK(seq);
+                expectedSeq++;
+                received++;
+            } else if(seq < expectedSeq) {
+                cout << "[LOG] Receive Sequence Number: " << seq << ", but Expected for Sequence Number: " << expectedSeq << endl;
+                cout << "[INFO] Duplicate segment " << seq << ", re-ACK sent\n";
+                sendACK(seq);
+            } else {
+                cout << "[INFO] Future segment " << seq << ", sent NAK for seq " << expectedSeq << "\n";
+                sendNAK(expectedSeq);
+            }
+
+            cleanup(seg);
+        }
+
+        ofs.close();
+        cout << "[INFO] File saved to: " << filepath << "\n";
+        return true;
+    }
+
+
+
+private:
+    static void cleanup(Segment* seg) {
         if (!seg) return;
-        if (seg->payload) delete[] seg->payload;
+        if (seg->payload) delete[] (char*)seg->payload;
         delete seg;
     }
 };
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
-        cerr << "Usage: " << argv[0] << " <server_ip> <port> <file1> [file2 ...]\n";
+        cerr << "Usage: " << argv[0] << " <server_ip> <port> <file1> [file2 ...]" << endl;
         return 1;
     }
-    string ip = argv[1];
-    int port  = atoi(argv[2]);
 
-    ReliableUDPClient client(ip, port);
-    if (!client.init()) return 1; // ฟังก์ชันเตรียมการ (สร้าง UDP socket, เซ็ตที่อยู่เซิร์ฟเวอร์ ) 1 -> หยุดโปรแกรม, 0 -> สำเร็จ
+    string serverIp = argv[1];
+    int port = atoi(argv[2]);
 
-    // เก็บผลลัพธ์ต่อไฟล์
-    map<string, bool> results;
+    try {
+        ReliableUDPClient client(serverIp, port);
 
-    for (int i = 3; i < argc; ++i) {
-        string file = argv[i];
-        cout << "==== Start: " << file << " ====\n";
-        bool ok = client.requestAndDownload(file);
-        results[file] = ok;
-        cout << "==== End: " << file << " → " << (ok ? "OK" : "FAIL") << " ====\n\n";
+        int filesCount = argc - 3;
+        bool multiFiles = (filesCount > 1);
 
+        for (int i = 3; i < argc; ++i) {
+            string fname = argv[i];
+            MetaData resp{}; 
+
+            if (!client.requestFile(fname, resp)) {
+                cerr << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << "\n";
+                if (!multiFiles) return 1;
+                continue;
+            }
+
+            if (!client.receiveMeta(fname, resp)) {
+                cerr << "[ERROR] Failed to receive RESPONSE metadata for file: " << fname << "\n";
+                if (!multiFiles) return 1;
+                continue;
+            }
+
+            if (!resp.fileExists) {
+                cerr << "[INFO] Server reports file NOT FOUND: " << fname << "\n";
+                if (!multiFiles) return 1;
+                continue;
+            }
+
+            if (resp.fileSize <= 0 || resp.totalSegments <= 0) {
+                cerr << "[ERROR] Invalid file meta for " << fname
+                     << " (size=" << resp.fileSize
+                     << ", totalSegments=" << resp.totalSegments << ")\n";
+                if (!multiFiles) return 1;
+                continue;
+            }
+
+            string effectiveName = (resp.filename[0] ? string(resp.filename) : fname);
+            if (!client.receiveFile(effectiveName, resp.totalSegments)) {
+                cerr << "[ERROR] Failed while receiving file: " << effectiveName << "\n";
+                if (!multiFiles) 
+                return 1;
+            }
+        }
+    } catch (const exception& ex) {
+        cerr << "Fatal: " << ex.what() << "\n";
+        return 2;
     }
 
-    // สรุปผลรวม
-    cout << "========== SUMMARY ==========\n";
-    int okCount = 0, failCount = 0;
-    for (auto& kv : results) {
-        cout << kv.first << " : " << (kv.second ? "OK" : "FAIL") << "\n";
-        kv.second ? okCount++ : failCount++;
-    }
-    cout << "Total: " << results.size()
-         << " | OK=" << okCount << " | FAIL=" << failCount << "\n";
-
-    return (failCount == 0) ? 0 : 2;
+    return 0;
 }
+
