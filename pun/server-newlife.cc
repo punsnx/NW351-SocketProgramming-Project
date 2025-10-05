@@ -270,6 +270,7 @@ private:
             sendNextDataSegment();
         } else {
             // file doesn't exist, send TYPE_COMPLETE immediately
+            cout << "\n=== File doesn't exist, send TYPE_COMPLETE to Client ===" << endl;
             MetaData completeMeta;
             completeMeta.type = TYPE_COMPLETE;
             strcpy(completeMeta.filename, currentFilename.c_str());
@@ -277,8 +278,7 @@ private:
             Segment* complete = createSegmentWithPayload(&completeMeta, 0, sizeof(MetaData));
             complete->header.checkSum = calculateChecksum(complete);
             sendSegment(complete);
-            cout << "\n=== File doesn't exist, send TYPE_COMPLETE to Client ===" << endl;
-
+            
             deleteSegment(complete);
         }
     }
@@ -289,16 +289,7 @@ private:
             cout << "All segments sent!" << endl;
             
             // send completion message
-            MetaData completeMeta;
-            completeMeta.type = TYPE_COMPLETE;
-            strcpy(completeMeta.filename, currentFilename.c_str());
-            
-            Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
-            complete->header.checkSum = calculateChecksum(complete);
-            sendSegment(complete);
-            
-            deleteSegment(complete);
-            
+            sendComplete();
             transferActive = false;
             return;
         }
@@ -312,6 +303,20 @@ private:
         // send the segment
         sendSegment(seg);
     }
+
+    void sendComplete(){
+        MetaData completeMeta;
+        completeMeta.type = TYPE_COMPLETE;
+        strcpy(completeMeta.filename, currentFilename.c_str());
+        
+        Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
+        complete->header.checkSum = calculateChecksum(complete);
+
+        // sendSegment(complete);
+        sendSegmentReliable(complete);
+        
+        deleteSegment(complete);
+    } 
     
     void handleAck(Segment* seg) {
         cout << "Got ACK for segment " << seg->header.seqNumber << endl;
@@ -324,28 +329,17 @@ private:
                 sendNextDataSegment();
             } else {
                 cout << "File transfer complete!" << endl;
-                
-                
-                // QUICK-FIX: send completion message
-                MetaData completeMeta;
-                completeMeta.type = TYPE_COMPLETE;
-                strcpy(completeMeta.filename, currentFilename.c_str());
-                
-                Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
-                complete->header.checkSum = calculateChecksum(complete);
-                sendSegment(complete);
-                
-                deleteSegment(complete);
-                
-                
+                //QUICK FIX send completion message
+                // sendComplete(); USE with sendNextDataSegment() instead
+                sendNextDataSegment();
                 transferActive = false;
                 cleanupSegments();
             }
         } else {
             // wrong ACK sequence
             cout << "Wrong ACK sequence. Expected: " << currentSegment 
-                 << ", Got: " << seg->header.seqNumber << endl;
-            sendNextDataSegment();
+                 << ", Got: " << seg->header.seqNumber << " [IGNORE]" << endl;
+                // sendNextDataSegment();
         }
     }
     
@@ -388,6 +382,8 @@ private:
         int tryCount = 0;
         
         while(tryCount < maxRetries) {
+            cout << "[sendSegmentReliable()]" << endl;
+
             // send the segment
             sendSegment(seg);
             cout << "Sent segment, waiting for ACK..." << endl;
@@ -406,15 +402,22 @@ private:
                 unsigned short receivedChecksum = response->header.checkSum;
                 response->header.checkSum = 0;
                 unsigned short calculatedChecksum = calculateChecksum(response);
+
                 
                 if(receivedChecksum == calculatedChecksum) {
-                    MetaData* meta = (MetaData*)response->payload;
-                    if(meta->type == TYPE_ACK) {
-                        cout << "Got ACK!" << endl;
-                        deleteSegment(response);
-                        return true;
-                    } else if(meta->type == TYPE_NAK) {
-                        cout << "Got NAK, retrying..." << endl;
+                    if(response->header.seqNumber == currentSegment){
+                        MetaData* meta = (MetaData*)response->payload;
+                        if(meta->type == TYPE_ACK) {
+                            cout << "Got ACK!" << endl;
+                            deleteSegment(response);
+                            return true;
+                        } else if(meta->type == TYPE_NAK) {
+                            cout << "Got NAK, retrying..." << endl;
+                        }
+                    }else{
+                        // wrong ACK sequence
+                        cout << "Wrong ACK sequence. Expected: " << currentSegment 
+                            << ", Got: " << seg->header.seqNumber << " [IGNORE]" << endl; 
                     }
                 } else {
                     cout << "Corrupt response, retrying..." << endl;
