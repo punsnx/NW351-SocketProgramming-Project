@@ -60,6 +60,7 @@ public:
         }
 
         sendto(sockfd, buffer, totalSize, 0, (sockaddr*)&serverAddr, serverLen);
+        cout << "<<--- send segment with Sequence Number: " << seg->header.seqNumber << endl;
         delete[] buffer;
     }
 
