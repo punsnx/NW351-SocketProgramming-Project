@@ -150,8 +150,7 @@ private:
             seg->payload = nullptr;
         }
 
-        cout << "--->> Server receive segment at Sequence Number: " << seg->header.seqNumber << endl;
-        
+        cout << "--->> Server receive segment at Sequence Number: " << seg->header.seqNumber << endl;        
         return seg;
     }
     

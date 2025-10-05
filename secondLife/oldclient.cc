@@ -26,7 +26,7 @@ private:
     sockaddr_in serverAddr{};
     socklen_t serverLen{};
 
-    int timeoutSec = 5;   // default 1s; can be tuned
+    int timeoutSec = 1;   // default 1s; can be tuned
     int maxRetries = 5;   // retry for requests/NAKs
 
 public:
@@ -364,45 +364,20 @@ int main(int argc, char* argv[]) {
     try {
         ReliableUDPClient client(serverIp, port);
 
-        int filesCount = argc - 3;
-        bool multiFiles = (filesCount > 1);
-
         for (int i = 3; i < argc; ++i) {
             string fname = argv[i];
-            MetaData resp{}; 
-
+            MetaData resp{};
             if (!client.requestFile(fname, resp)) {
-                cerr << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << "\n";
-                if (!multiFiles) return 1;
+                cerr << "Failed to get RESPONSE for file: " << fname << "\n";
                 continue;
             }
-
             if (!client.receiveMeta(fname, resp)) {
-                cerr << "[ERROR] Failed to receive RESPONSE metadata for file: " << fname << "\n";
-                if (!multiFiles) return 1;
-                continue;
+                if (!resp.fileExists || resp.fileSize <= 0 || resp.totalSegments <= 0) {
+                    cout << "Server reports file not found: " << fname << "\n";
+                    continue;
+                }
             }
-
-            if (!resp.fileExists) {
-                cerr << "[INFO] Server reports file NOT FOUND: " << fname << "\n";
-                if (!multiFiles) return 1;
-                continue;
-            }
-
-            if (resp.fileSize <= 0 || resp.totalSegments <= 0) {
-                cerr << "[ERROR] Invalid file meta for " << fname
-                     << " (size=" << resp.fileSize
-                     << ", totalSegments=" << resp.totalSegments << ")\n";
-                if (!multiFiles) return 1;
-                continue;
-            }
-
-            string effectiveName = (resp.filename[0] ? string(resp.filename) : fname);
-            if (!client.receiveFile(effectiveName, resp.totalSegments)) {
-                cerr << "[ERROR] Failed while receiving file: " << effectiveName << "\n";
-                if (!multiFiles) 
-                return 1;
-            }
+            client.receiveFile(resp.filename[0] ? string(resp.filename) : fname, resp.totalSegments);
         }
     } catch (const exception& ex) {
         cerr << "Fatal: " << ex.what() << "\n";
@@ -411,4 +386,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-

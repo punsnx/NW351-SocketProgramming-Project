@@ -1,3 +1,8 @@
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <fstream>
+
 #include "header/client.h"
 
 using namespace std;
@@ -252,18 +257,18 @@ public:
         string folder = "clientFiles/";
         string filepath = folder + filename;
 
-    #if __cplusplus >= 201703L
-        #include <filesystem>
-        if (!std::filesystem::exists(folder)) {
-            std::filesystem::create_directory(folder);
+        // สร้าง/เช็คโฟลเดอร์แบบ POSIX (C++11)
+        if (!ensureDir(folder)) {
+            std::cerr << "[ERROR] Cannot create/access folder: " << folder << "\n";
+            return false;
         }
-    #endif
 
         ofstream ofs(filepath, ios::binary);
         if(!ofs) {
             cerr << "[ERROR] Cannot open file: " << filepath << "\n";
             return false;
-        }
+    }
+
 
         int expectedSeq = 0;
         int received = 0;
@@ -333,7 +338,22 @@ private:
         if (seg->payload) delete[] (char*)seg->payload;
         delete seg;
     }
+
+        static bool ensureDir(const std::string& path) {
+        struct stat st{};
+        if (stat(path.c_str(), &st) == 0) {
+            return S_ISDIR(st.st_mode);          // มีอยู่และเป็นไดเรกทอรี
+        }
+        if (errno == ENOENT) {                    // ไม่มีอยู่ → สร้างใหม่
+            return mkdir(path.c_str(), 0755) == 0;
+        }
+        return false;                             // มีข้อผิดพลาดอื่น
+    }
+
+
 };
+
+
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
