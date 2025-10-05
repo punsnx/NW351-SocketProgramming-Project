@@ -238,6 +238,7 @@ private:
             cleanupSegments();
             fileSegments = packetize(currentFileData, currentFileSize, MAX_PAYLOAD_SIZE);
             responseMeta.totalSegments = fileSegments.size();
+            // responseMeta.totalSegments = fileSegments.size() + 1;
             
             cout << "File exists! Size: " << currentFileSize << " bytes" << endl;
             cout << "Created " << fileSegments.size() << " segments" << endl;
@@ -249,6 +250,7 @@ private:
             responseMeta.fileExists = false;
             responseMeta.fileSize = 0;
             responseMeta.totalSegments = 0;
+            // responseMeta.totalSegments = 1;
             
             cout << "File does not exist!" << endl;
             transferActive = false;
