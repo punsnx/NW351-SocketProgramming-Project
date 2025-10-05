@@ -160,7 +160,7 @@ private:
         sendto(serverSocket, buffer, totalSize, 0,
                (sockaddr*)&clientAddr, clientLen);
         
-        cout << "<<---Server sent segment at Sequence Number: " << seg->header.seqNumber << endl;
+        cout << "<<--Server sent segment at Sequence Number: " << seg->header.seqNumber << endl;
         
         delete[] buffer;
     }
@@ -259,7 +259,7 @@ private:
         response->header.checkSum = calculateChecksum(response);
         
         // send response
-        cout << "=== Sent Metadata to Client ===" << endl;
+        cout << "\n=== Sent Metadata to Client ===" << endl;
         sendSegmentReliable(response);
         
         deleteSegment(response);
@@ -324,6 +324,20 @@ private:
                 sendNextDataSegment();
             } else {
                 cout << "File transfer complete!" << endl;
+                
+                
+                // QUICK-FIX: send completion message
+                MetaData completeMeta;
+                completeMeta.type = TYPE_COMPLETE;
+                strcpy(completeMeta.filename, currentFilename.c_str());
+                
+                Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
+                complete->header.checkSum = calculateChecksum(complete);
+                sendSegment(complete);
+                
+                deleteSegment(complete);
+                
+                
                 transferActive = false;
                 cleanupSegments();
             }
@@ -352,7 +366,7 @@ private:
         ack->header.checkSum = calculateChecksum(ack);
         
         sendSegment(ack);
-        cout << "Server send ACK for Sequence Number: " << seqNum << endl;
+        cout << "<<--- Server send ACK for Sequence Number: " << seqNum << endl;
         
         deleteSegment(ack);
     }

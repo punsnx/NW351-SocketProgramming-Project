@@ -65,7 +65,7 @@ public:
         }
 
         sendto(sockfd, buffer, totalSize, 0, (sockaddr*)&serverAddr, serverLen);
-        cout << "<<--- send segment with Sequence Number: " << seg->header.seqNumber << endl;
+        cout << "<<-- send segment with Sequence Number: " << seg->header.seqNumber << endl;
         delete[] buffer;
     }
 
@@ -110,7 +110,7 @@ public:
     // ---- protocol ----
     // reliable send
     bool requestFile(const string& filename, MetaData& outRespMeta) {
-        cout << "\n=== Requesting file: " << filename << " ===\n";
+        cout << "\n\n~~~~~~~~~~~~=== Requesting file: " << filename << " ===~~~~~~~~~~~~\n";
 
         MetaData req{};
         req.type = TYPE_REQUEST;
@@ -131,14 +131,14 @@ public:
         while (true) {
             Segment* seg = receiveSegment();
             if (!seg) {
-                retryCount++;
-                cerr << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
-                    << " (expecting seq " << expectedSeq << ")\n";
                 if (retryCount >= maxRetries) {
                     cerr << "[ERROR] Max retries exceeded. Aborting.\n";
                     exit(1);
                 }
+                cerr << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
+                << " (expecting seq " << expectedSeq << ")\n";
                 sendNAK(expectedSeq);
+                retryCount++;
                 continue;
             }
             retryCount = 0;
@@ -159,7 +159,7 @@ public:
                 MetaData* meta = (MetaData*)seg->payload;
                 // isACK?
                 if(meta->type == TYPE_ACK) {
-                    sendACK(seg->header.seqNumber);
+                    // sendACK(seg->header.seqNumber);
                     outRespMeta = *meta;
                     cout << "[INFO] Recieve First ACK from Server\n";
                     cleanup(seg);
@@ -273,17 +273,23 @@ public:
 
         int expectedSeq = 0;
         int received = 0;
+        int retryCount = 0;
 
         cout << "\n=== Receiving file: " << filename << " (" << totalSegments << " segments expected) ===\n";
 
         while(true) {
-            
             Segment* seg = receiveSegment();
             if(!seg) {
+                if (retryCount >= maxRetries) {
+                    cerr << "[ERROR] Max retries exceeded. Aborting.\n";
+                    exit(1);
+                }
                 cerr << "[TIMEOUT] No segment received for seq " << expectedSeq << ", sending NAK\n";
                 sendNAK(expectedSeq);
+                retryCount++;
                 continue;
             }
+            retryCount = 0;
 
             unsigned short recvChk = seg->header.checkSum;
             seg->header.checkSum = 0;
@@ -297,8 +303,8 @@ public:
             if(seg->payload) {
                 MetaData* meta = (MetaData*)seg->payload;
                 if(meta->type == TYPE_COMPLETE) {
-                    cout << "[INFO] TYPE_COMPLETE received for seq " << seg->header.seqNumber
-                        << ", total received segments: " << received << "\n";
+                    cout << "[INFO] TYPE_COMPLETE received for seq " << seg->header.seqNumber 
+                    << ", total received segments: " << received << "\n";
                     sendACK(seg->header.seqNumber);
                     cleanup(seg);
                     break;
@@ -368,20 +374,45 @@ int main(int argc, char* argv[]) {
     try {
         ReliableUDPClient client(serverIp, port);
 
+        int filesCount = argc - 3;
+        bool multiFiles = (filesCount > 1);
+
         for (int i = 3; i < argc; ++i) {
             string fname = argv[i];
-            MetaData resp{};
+            MetaData resp{}; 
+
             if (!client.requestFile(fname, resp)) {
-                cerr << "Failed to get RESPONSE for file: " << fname << "\n";
+                cerr << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << "\n";
+                if (!multiFiles) return 1;
                 continue;
             }
+
             if (!client.receiveMeta(fname, resp)) {
-                if (!resp.fileExists || resp.fileSize <= 0 || resp.totalSegments <= 0) {
-                    cout << "Server reports file not found: " << fname << "\n";
-                    continue;
-                }
+                cerr << "[ERROR] Failed to receive RESPONSE metadata for file: " << fname << "\n";
+                if (!multiFiles) return 1;
+                continue;
             }
-            client.receiveFile(resp.filename[0] ? string(resp.filename) : fname, resp.totalSegments);
+
+            if (!resp.fileExists) {
+                cerr << "[INFO] Server reports file NOT FOUND: " << fname << "\n";
+                if (!multiFiles) return 1;
+                continue;
+            }
+
+            if (resp.fileSize <= 0 || resp.totalSegments <= 0) {
+                cerr << "[ERROR] Invalid file meta for " << fname
+                     << " (size=" << resp.fileSize
+                     << ", totalSegments=" << resp.totalSegments << ")\n";
+                if (!multiFiles) return 1;
+                continue;
+            }
+
+            string effectiveName = (resp.filename[0] ? string(resp.filename) : fname);
+            if (!client.receiveFile(effectiveName, resp.totalSegments)) {
+                cerr << "[ERROR] Failed while receiving file: " << effectiveName << "\n";
+                if (!multiFiles) 
+                return 1;
+            }
         }
     } catch (const exception& ex) {
         cerr << "Fatal: " << ex.what() << "\n";
@@ -390,3 +421,4 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
