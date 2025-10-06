@@ -179,7 +179,11 @@ public:
                     return true;
                 } else {
                     cout << "[ERROR] Server did not send First ACK\n";
-                    sendNAK(expectedSeq);
+                    cout << "[Debug] fileExists=" << meta->fileExists
+                        << ", fileSize=" << meta->fileSize
+                        << ", totalSegments=" << meta->totalSegments
+                        << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << ", fileName=" << meta->filename << endl;
+                    // sendNAK(expectedSeq);
                     continue;
                 }
             }
