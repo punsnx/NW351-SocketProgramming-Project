@@ -272,16 +272,12 @@ public:
 
         // สร้าง/เช็คโฟลเดอร์แบบ POSIX (C++11)
         if (!ensureDir(folder)) {
-            std::cout << "[ERROR] Cannot create/access folder: " << folder << "\n";
+            cout << "[ERROR] Cannot create/access folder: " << folder << "\n";
             return false;
         }
 
-        ofstream ofs(filepath, ios::binary);
-        if(!ofs) {
-            cout << "[ERROR] Cannot open file: " << filepath << "\n";
-            return false;
-        }
-
+        vector<char> buf; 
+        buf.reserve(static_cast<size_t>(totalSegments) * MAX_PAYLOAD_SIZE);
 
         int expectedSeq = 0;
         int received = 0;
@@ -329,8 +325,10 @@ public:
 
             int seq = seg->header.seqNumber;
             if(seq == expectedSeq) {
-                if(seg->payload && seg->header.length > HEADER_SIZE) {
-                    ofs.write((char*)seg->payload, seg->header.length - HEADER_SIZE);
+                int psize = seg->header.length - HEADER_SIZE;
+                if (psize > 0 && seg->payload) {
+                    char* p = static_cast<char*>(seg->payload);
+                    buf.insert(buf.end(), p, p + psize);
                 }
                 cout << "[INFO] Received segment " << seq << ", sent ACK\n";
                 sendACK(seq);
@@ -349,9 +347,15 @@ public:
             cleanup(seg);
         }
 
-        ofs.close();
-        cout << "[INFO] File saved to: " << filepath << "\n";
-        return true;
+        if (!buf.empty()) {
+            writeFile(filepath, buf.data(), static_cast<int>(buf.size()));
+            cout << "[INFO] File saved to: " << filepath << "\n";
+            return true;
+        } else {
+            cout << "[WARN] No data payload collected for file: " << filepath << "\n";
+            return false;
+        }
+   
     }
 
     void receiveNonExist(const string& filename, MetaData& outRespMeta) {
