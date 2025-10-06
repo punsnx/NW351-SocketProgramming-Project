@@ -284,7 +284,7 @@ private:
 
             strcpy(completeMeta.filename, currentFilename.c_str());
 
-            Segment* complete = createSegmentWithPayload(&completeMeta, 0, sizeof(MetaData));
+            Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
             complete->header.checkSum = calculateChecksum(complete);
 
             // mook
@@ -298,7 +298,7 @@ private:
     
     void sendNextDataSegment() {
         cout << "[sendNextDataSegment] ";
-        if(currentSegment >= fileSegments.size()) {
+        if(currentSegment > fileSegments.size()) {
             cout << "All segments sent!" << endl;
             
             // send completion message
@@ -339,7 +339,7 @@ private:
             // correct ACK, move to next segment
             currentSegment++;
             
-            if(currentSegment < fileSegments.size()) {
+            if(currentSegment <= fileSegments.size()) {
                 sendNextDataSegment();
             } else {
                 cout << "File transfer complete!" << endl;
