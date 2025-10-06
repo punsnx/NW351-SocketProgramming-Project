@@ -427,7 +427,7 @@ private:
                     }else{
                         // wrong ACK sequence
                         cout << "Wrong ACK sequence. Expected: " << currentSegment 
-                            << ", Got: " << seg->header.seqNumber << " [IGNORE]" << endl; 
+                            << ", Got: " << response->header.seqNumber << " [IGNORE]" << endl; 
                     }
                 } else {
                     cout << "Corrupt response, retrying..." << endl;

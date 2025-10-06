@@ -102,7 +102,7 @@ public:
 
     void sendACK(int seq) {
         MetaData meta{}; meta.type = TYPE_ACK;
-        Segment* ack = createSegment(&meta, seq, (int)sizeof(int));
+        Segment* ack = createSegment(&meta, seq, sizeof(MetaData));
         ack->header.checkSum = calculateChecksum(ack);
         sendSegment(ack);
         cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
@@ -111,7 +111,7 @@ public:
 
     void sendNAK(int seq) {
         MetaData meta{}; meta.type = TYPE_NAK;
-        Segment* nak = createSegment(&meta, seq, (int)sizeof(int));
+        Segment* nak = createSegment(&meta, seq, sizeof(MetaData));
         nak->header.checkSum = calculateChecksum(nak);
         sendSegment(nak);
         cout << "Client send NAK for Sequence Number:" << seq << endl;
@@ -286,7 +286,7 @@ public:
         if(!ofs) {
             cout << "[ERROR] Cannot open file: " << filepath << "\n";
             return false;
-    }
+        }
 
 
         int expectedSeq = 0;
