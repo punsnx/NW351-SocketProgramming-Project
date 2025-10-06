@@ -256,7 +256,8 @@ public:
                         cout << "[INFO] Server response: fileExists=" << meta->fileExists
                         << ", fileSize=" << meta->fileSize
                         << ", totalSegments=" << meta->totalSegments
-                        << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << "\n";
+                        << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << ", fileName=" << meta->filename << endl;
+
                         sendACK(seg->header.seqNumber);
 
                         cleanup(seg);
@@ -353,6 +354,66 @@ public:
         return true;
     }
 
+    void receiveNonExist(const string& filename, MetaData& outRespMeta) {
+        cout << "\n=== File Not Exist, Waiting for TYPE_COMPLETE from server for file: " << filename << " ===\n";
+
+        int retryCount = 0;
+        int expectedSeq = 0;
+        while (true) {
+            Segment* seg = receiveSegment();
+            
+            if (!seg) {
+                // cout << "[Debug] seg = " << seg  << ", !seg = " << !seg << endl;
+                retryCount++;
+                cout << "[TIMEOUT] Client did not receive segment ,waiting for segment, retry " << retryCount << "/" << maxRetries << endl;
+                if (retryCount >= maxRetries) {
+                    cout << "[ERROR] Max retries exceeded. Aborting.\n";
+                    exit(1);
+                }
+                // sendNAK(seg->header.seqNumber);
+                cout << "[IGNORE]" << endl;
+                continue;
+            }
+            retryCount = 0;
+
+            unsigned short recvChk = seg->header.checkSum;
+            seg->header.checkSum = 0;
+            if (recvChk != calculateChecksum(seg)) {
+                cout << "[ERROR] RESPONSE checksum mismatch, sending NAK\n";
+                sendNAK(expectedSeq);
+
+                cleanup(seg);
+                continue;
+            }
+
+            cout << "[Debug B] seg->header.seqNumber= "  << seg->header.seqNumber <<
+            ", expectedSeq = " << expectedSeq << endl;
+            MetaData* meta = (MetaData*)seg->payload;
+            cout << "[Debug] Server response: fileExists=" << meta->fileExists << ", fileSize=" << meta->fileSize << ", totalSegments=" << meta->totalSegments << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << ", fileName=" << meta->filename << endl;
+
+            if(seg->header.seqNumber == expectedSeq){
+                cout << "[Debug] seg->payload= " << seg->payload << endl;
+                cout << "[Debug] ((MetaData*)complete->payload)->type= " << ((MetaData*)seg->payload)->type << endl;
+                if(seg->payload) {
+                    MetaData* meta = (MetaData*)seg->payload;
+                    cout << "[Debug] meta->type= " << meta->type << endl;
+                    
+                    if(meta->type == TYPE_COMPLETE && seg->header.seqNumber == expectedSeq) {                
+                        outRespMeta = *meta;
+                        cout << "[INFO] Server response: fileExists=" << meta->fileExists
+                        << ", fileSize=" << meta->fileSize
+                        << ", totalSegments=" << meta->totalSegments
+                        << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << "\n";
+                        sendACK(seg->header.seqNumber);
+
+                        cleanup(seg);
+                        cout << "[SUCCESS] receiveNonExist success" << endl;
+                        return;
+                    }
+                }
+            }
+        }       
+    }
 
 
 private:
@@ -415,6 +476,10 @@ int main(int argc, char* argv[]) {
             if (!resp.fileExists) {
                 cout << "[INFO] Server reports file NOT FOUND: " << fname << endl;
                 if (!multiFiles) return 1;
+                else {
+                    client.receiveNonExist(fname, resp);
+                    continue;
+                }
                 // continue;
             }
 

@@ -166,7 +166,7 @@ private:
     }
     
     void handleSegment(Segment* seg) {
-        cout << "[handleSegment()] Received segment - Seq: " << seg->header.seqNumber 
+        cout << endl << "[Debug handleSegment()] Received segment - Seq: " << seg->header.seqNumber 
              << ", Length: " << seg->header.length << endl;
         
         // verify checksum
@@ -275,11 +275,19 @@ private:
             cout << "\n=== File doesn't exist, send TYPE_COMPLETE to Client ===" << endl;
             MetaData completeMeta;
             completeMeta.type = TYPE_COMPLETE;
+
+            // mook
+            completeMeta.fileExists = 0;
+
             strcpy(completeMeta.filename, currentFilename.c_str());
 
             Segment* complete = createSegmentWithPayload(&completeMeta, 0, sizeof(MetaData));
             complete->header.checkSum = calculateChecksum(complete);
-            sendSegment(complete);
+
+            // mook
+            cout << "[Debug] Sending... ((MetaData*)complete->payload)->type= " << ((MetaData*)complete->payload)->type << endl;
+            // sendSegment(complete);
+            sendSegmentReliable(complete);
             
             deleteSegment(complete);
         }
