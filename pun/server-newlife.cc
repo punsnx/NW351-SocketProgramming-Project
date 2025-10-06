@@ -208,6 +208,7 @@ private:
     }
     
     void handleFileRequest(Segment* seg, MetaData* meta) {
+        currentSegment = 0;
         currentFilename = meta->filename;
         cout << "\n=== Got request for file: " << currentFilename << " ===" << endl;
         
@@ -243,7 +244,6 @@ private:
             cout << "File exists! Size: " << currentFileSize << " bytes" << endl;
             cout << "Created " << fileSegments.size() << " segments" << endl;
             
-            currentSegment = 0;
             transferActive = true;
         } else {
             // file doesn't exist
@@ -275,9 +275,6 @@ private:
             cout << "\n=== File doesn't exist, send TYPE_COMPLETE to Client ===" << endl;
             MetaData completeMeta;
             completeMeta.type = TYPE_COMPLETE;
-
-            // mook
-            completeMeta.fileExists = 0;
 
             strcpy(completeMeta.filename, currentFilename.c_str());
 
