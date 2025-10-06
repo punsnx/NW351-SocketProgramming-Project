@@ -16,7 +16,7 @@ private:
 
     int timeoutSec = 1;   // default 1s; can be tuned
     int maxRetries = 5;   // retry for requests/NAKs
-    int expectedSeq = 0;
+    int expectedSeq = -1;
 
 public:
     ReliableUDPClient(const string& serverIp, int port) {
@@ -169,7 +169,7 @@ public:
         memset(req.filename, 0, sizeof(req.filename));
         strncpy(req.filename, filename.c_str(), sizeof(req.filename) - 1);
 
-        Segment* request = createSegment(&req, 0, sizeof(MetaData));
+        Segment* request = createSegment(&req, -1, sizeof(MetaData));
         request->header.checkSum = calculateChecksum(request);
 
         cout << "[INFO] Sending request for file: " << filename << endl;
@@ -182,7 +182,7 @@ public:
 
         delete request;
 
-        expectedSeq = 0;
+        expectedSeq = -1;
         
         int retryCount = 0;
         bool serverRespond = false;
@@ -240,6 +240,7 @@ public:
                     }
                 } 
             } else {
+                cout << "[Debug] unmatch seq num" << endl;
                 return false;
             }
 
@@ -293,11 +294,15 @@ public:
                             << ", fileSize=" << meta->fileSize
                             << ", totalSegments=" << meta->totalSegments
                             << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << ", fileName=" << meta->filename << endl;
-    
-                            sendACK(seg->header.seqNumber);
-    
-                            cleanup(seg);
-                            return true;
+                            if (meta->filename == filename) {
+                                sendACK(seg->header.seqNumber);
+                                cleanup(seg);
+                                expectedSeq++;
+                                return true;
+                            } else {
+                                cout << "[Debug] drop segment due to unmatch filename" << endl;
+                            }
+                            
                         }            
                     } else if(seg->header.seqNumber < expectedSeq) {
                         cout << "[LOG] Receive Sequence Number: " << seg->header.seqNumber << ", but Expected for Sequence Number: " << expectedSeq << endl;
@@ -521,6 +526,8 @@ int main(int argc, char* argv[]) {
                 if (!multiFiles) return 1;
                 continue;
             }
+
+            
             
             cout << "[Debug] resp.fileExists = " << resp.fileExists << endl;
             cout << "[Debug] multiFiles = " << multiFiles << endl;

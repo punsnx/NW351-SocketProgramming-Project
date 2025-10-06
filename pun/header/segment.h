@@ -29,7 +29,7 @@ typedef struct _Header{
     unsigned short desPort;
     unsigned short length;
     unsigned short checkSum;
-    unsigned int seqNumber;
+    int seqNumber;
 }Header;
 
 typedef struct _Segment{

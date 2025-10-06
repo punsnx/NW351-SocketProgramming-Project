@@ -208,7 +208,7 @@ private:
     }
     
     void handleFileRequest(Segment* seg, MetaData* meta) {
-        currentSegment = 0;
+        currentSegment = -1;
         currentFilename = meta->filename;
         cout << "\n=== Got request for file: " << currentFilename << " ===" << endl;
         
@@ -257,7 +257,7 @@ private:
         }
         
         // create response segment
-        Segment* response = createSegmentWithPayload(&responseMeta, 0, sizeof(MetaData));
+        Segment* response = createSegmentWithPayload(&responseMeta, currentSegment, sizeof(MetaData));
         response->header.checkSum = calculateChecksum(response);
         
         // send response
@@ -298,7 +298,7 @@ private:
     
     void sendNextDataSegment() {
         cout << "[sendNextDataSegment] ";
-        if(currentSegment > fileSegments.size()) {
+        if(currentSegment >= fileSegments.size()) {
             cout << "All segments sent!" << endl;
             
             // send completion message
@@ -314,8 +314,8 @@ private:
              << " (size: " << (seg->header.length - HEADER_SIZE) << " bytes)" << endl;
         
         // send the segment
-        // sendSegment(seg);
-        sendSegmentReliable(seg);
+        sendSegment(seg);
+        // sendSegmentReliable(seg);
     }
 
     void sendComplete(){
@@ -339,7 +339,7 @@ private:
             // correct ACK, move to next segment
             currentSegment++;
             
-            if(currentSegment <= fileSegments.size()) {
+            if(currentSegment < fileSegments.size()) {
                 sendNextDataSegment();
             } else {
                 cout << "File transfer complete!" << endl;
