@@ -265,11 +265,13 @@ private:
         bool isValidSentMeta = sendSegmentReliable(response);
         
         deleteSegment(response);
+
         
         if(!isValidSentMeta){
             cout << "Can not send MetaData to Client, Terminated " << responseMeta.filename << "Request!" << endl; 
             return;
         }
+        ++currentSegment;
         // if file exists, start sending data
         if(transferActive && fileSegments.size() > 0) {
             cout << "\n=== Sending file data to Client by sendNextDataSegment() ===" << endl;
@@ -312,7 +314,8 @@ private:
              << " (size: " << (seg->header.length - HEADER_SIZE) << " bytes)" << endl;
         
         // send the segment
-        sendSegment(seg);
+        // sendSegment(seg);
+        sendSegmentReliable(seg);
     }
 
     void sendComplete(){
