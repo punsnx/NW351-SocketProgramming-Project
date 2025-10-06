@@ -16,6 +16,7 @@ private:
 
     int timeoutSec = 1;   // default 1s; can be tuned
     int maxRetries = 5;   // retry for requests/NAKs
+    int expectedSeq = 0;
 
 public:
     ReliableUDPClient(const string& serverIp, int port) {
@@ -54,9 +55,40 @@ public:
     }
 
     // ---- wire helpers ----
-    void sendSegment(Segment* seg) {
+    bool sendSegment(Segment* seg) {
+        // counter++;
+        // จำลองการ drop packet ทุก ๆ DROP_EVERY แพ็กเกต
+        // if (counter % DROP_EVERY == 0) {
+        //     cout << "[SIMULATED DROP] Dropping segment " << seg->header.seqNumber << endl;
+        //     return false; // ไม่ส่งออกไป
+        // }
+
+        int r = rand() % 100; // ได้ค่า 0-99
+        if (r < DROP_PERCENT)  {
+            cout << "[SIMULATED DROP] Dropping segment " << seg->header.seqNumber << endl;
+            return false; // ไม่ส่งออกไป
+        }
+
+
+        int c = rand() % 100;
+        if (c < CORRUPT_PERCENT) {
+            cout << "[SIMULATED CORRUPTION] Corrupting segment " << seg->header.seqNumber << endl;
+
+            // ตัวอย่าง: แก้ไข checksum (ทำให้ผิดแน่ ๆ)
+            seg->header.checkSum ^= 0xFFFF;
+
+            // หรือสุ่มแก้ payload ถ้ามี
+            int payloadSize = seg->header.length - HEADER_SIZE;
+            if (payloadSize > 0 && seg->payload) {
+                int pos = rand() % payloadSize;
+                ((char*)seg->payload)[pos] ^= 0xFF; // flip bits ที่ตำแหน่งสุ่ม
+            }
+        }
+
+        
         int totalSize = seg->header.length;
         char* buffer = new char[totalSize];
+        
 
         memcpy(buffer, &seg->header, sizeof(Header));
         int payloadSize = seg->header.length - HEADER_SIZE;
@@ -67,6 +99,7 @@ public:
         sendto(sockfd, buffer, totalSize, 0, (sockaddr*)&serverAddr, serverLen);
         cout << "<<-- send segment with Sequence Number: " << seg->header.seqNumber << endl;
         delete[] buffer;
+        return true;
     }
 
     Segment* receiveSegment() {
@@ -87,16 +120,6 @@ public:
         }
         cout << "--->> Client receive segment of Sequence Number: " << seg->header.seqNumber << endl;
 
-
-        // cout << endl << "------PAYLOAD------" << endl;
-        // cout << "[Debug] seg->payload = " << seg->payload << endl;
-        // char* data = static_cast<char*>(seg->payload);
-        // for (int i = 0; i < seg->header.length - HEADER_SIZE; i++) {
-        //     cout << data[i];
-        // }
-        // cout << endl;
-        // cout << "------------------" << endl << endl;
-        
         return seg;
     }
 
@@ -104,8 +127,17 @@ public:
         MetaData meta{}; meta.type = TYPE_ACK;
         Segment* ack = createSegment(&meta, seq, sizeof(MetaData));
         ack->header.checkSum = calculateChecksum(ack);
-        sendSegment(ack);
-        cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
+        
+        // if(sendSegment(ack)) {
+        // }
+        
+        while(true) {
+            if (sendSegment(ack)) {
+                cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
+                break;
+            }
+        }
+
         delete ack; // payload points to stack memory (meta), do not delete
     }
 
@@ -113,8 +145,17 @@ public:
         MetaData meta{}; meta.type = TYPE_NAK;
         Segment* nak = createSegment(&meta, seq, sizeof(MetaData));
         nak->header.checkSum = calculateChecksum(nak);
-        sendSegment(nak);
-        cout << "[INFO] Client send NAK for Sequence Number:" << seq << endl;
+        // sendSegment(nak);
+        // if(sendSegment(nak)) {
+        // }
+
+        while(true) {
+            if (sendSegment(nak)) {
+                cout << "[INFO] Client send NAK for Sequence Number:" << seq << endl;
+                break;
+            }
+        }
+
         delete nak; // payload points to stack memory (meta), do not delete
     }
 
@@ -132,10 +173,17 @@ public:
         request->header.checkSum = calculateChecksum(request);
 
         cout << "[INFO] Sending request for file: " << filename << endl;
-        sendSegment(request);
+
+        while(true) {
+            if (sendSegment(request)) {
+                break;
+            }
+        }
+
         delete request;
 
-        int expectedSeq = 0;
+        expectedSeq = 0;
+        
         int retryCount = 0;
         bool serverRespond = false;
 
@@ -146,10 +194,10 @@ public:
                     cout << "[ERROR] Max retries exceeded. Aborting.\n";
                     exit(1);
                 }
+                retryCount++;
                 cout << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
                 << " (expecting seq " << expectedSeq << ")\n";
                 // sendNAK(expectedSeq);
-                retryCount++;
                 continue;
             }
             retryCount = 0;
@@ -158,7 +206,7 @@ public:
             unsigned short recvChk = seg->header.checkSum;
             seg->header.checkSum = 0;
             if (recvChk != calculateChecksum(seg)) {
-                cout << "[ERROR] First ACK checksum mismatch, sending NAK\n";
+                cout << "[ERROR] First ACK checksum mismatch\n";
                 // sendNAK(expectedSeq);
                 cleanup(seg);
                 return false;
@@ -178,6 +226,9 @@ public:
                         // return true;
                         serverRespond = true;
                         return true;
+                    } else if(meta->type == TYPE_NAK) {
+                        cout << "[INFO] receive TYPE_NAK from server, resent REQUEST" << endl;
+                        return false;
                     } else {
                         cout << "[ERROR] Server did not send First ACK\n";
                         cout << "[Debug] fileExists=" << meta->fileExists
@@ -201,7 +252,7 @@ public:
     bool receiveMeta(const string& filename, MetaData& outRespMeta) {
         cout << "\n=== Waiting for Metadata from server for file: " << filename << " ===\n";
 
-        int expectedSeq = 0;
+        // int expectedSeq = 0;
         int retryCount = 0;
         bool serverRespond = false;
 
@@ -219,9 +270,6 @@ public:
                 continue;
             }
             retryCount = 0;
-            
-            
-            //************************* NOTE ... implement is already receive packet ?
 
             // isCorrupt?
             unsigned short recvChk = seg->header.checkSum;
@@ -279,7 +327,7 @@ public:
         vector<char> buf; 
         buf.reserve(static_cast<size_t>(totalSegments) * MAX_PAYLOAD_SIZE);
 
-        int expectedSeq = 0;
+        // int expectedSeq = 0;
         int received = 0;
         int retryCount = 0;
 
@@ -362,7 +410,7 @@ public:
         cout << "\n=== File Not Exist, Waiting for TYPE_COMPLETE from server for file: " << filename << " ===\n";
 
         int retryCount = 0;
-        int expectedSeq = 0;
+        // int expectedSeq = 0;
         while (true) {
             Segment* seg = receiveSegment();
             
@@ -463,7 +511,7 @@ int main(int argc, char* argv[]) {
             MetaData resp{}; 
 
             while (!client.requestFile(fname, resp)) {
-                cout << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << endl;
+                cout << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << ", resent REQUEST..." << endl;
                 // if (!multiFiles) return 1;
                 // continue;
             }
@@ -512,4 +560,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-
