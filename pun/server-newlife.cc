@@ -6,10 +6,12 @@
 #include <cstring>
 #include <vector>
 #include <sstream>
+#include <sys/time.h>
 #include "header/project-header.h"
 
 using namespace std;
 
+#define INIT_SEGMENT -1
 
 class ReliableUDPServer {
 private:
@@ -20,33 +22,42 @@ private:
     
     // file transfer state
     vector<Segment*> fileSegments;
-    char* currentFileData;      
-    int currentFileSize;       
-    int currentSegment;        
-    bool transferActive;        
+    char* currentFileData;
+    int currentFileSize;
+    int currentSegment;
+    bool transferActive;
+    struct timeval lastSendTime;
+    bool waitingForAck;
 
     string serverFilePath;
-    string currentFilename;     
-    
+    string currentFilename;
+
     // server config
     int port;
     int maxRetries;
     int timeoutSeconds;
+    // int dropPercent;
+    // int corruptPercent;
 
 public:
-    ReliableUDPServer(int portNum) : port(portNum) {
+    ReliableUDPServer(int portNum, int drop = 0, int corrupt = 0) : port(portNum), dropPercent(drop), corruptPercent(corrupt) {
         clientLen = sizeof(clientAddr);
-        currentSegment = 0;
+        currentSegment = INIT_SEGMENT;
         transferActive = false;
-        maxRetries = 3;
-        timeoutSeconds = 1;
+        waitingForAck = false;
+        maxRetries = 10;
+        timeoutSeconds = 0.99;
         serverSocket = -1;
         currentFileData = nullptr;
         currentFileSize = 0;
         serverFilePath = "Files/";
-        
+        memset(&lastSendTime, 0, sizeof(lastSendTime));
+        // srand(time(nullptr));
+
         cout << "=== Simple UDP Server ===" << endl;
         cout << "Port: " << port << endl;
+        // cout << "Drop Simulation: " << dropPercent << "%" << endl;
+        // cout << "Corrupt Simulation: " << corruptPercent << "%" << endl;
         cout << "MAX_PAYLOAD_SIZE: " << MAX_PAYLOAD_SIZE << " bytes" << endl;
         cout << "HEADER_SIZE: " << HEADER_SIZE << " bytes" << endl;
     }
@@ -74,10 +85,16 @@ public:
     
     void start() {
         cout << "Waiting for client requests..." << endl;
-        
+
         while(true) {
+            // check timeout if transfer is active
+            if(transferActive && waitingForAck && checkTimeout()) {
+                cout << "[Global Timeout] Resending current segment : " << currentSegment << endl;
+                sendNextDataSegment();
+            }
+
             Segment* receivedSeg = receiveSegment();
-            
+
             if(receivedSeg) {
                 handleSegment(receivedSeg);
             }
@@ -85,11 +102,24 @@ public:
     }
 
 private:
+    // ========== TIMER FUNCTIONS ==========
+
+    bool checkTimeout() {
+        struct timeval currentTime;
+        gettimeofday(&currentTime, nullptr);
+
+        long elapsedSeconds = currentTime.tv_sec - lastSendTime.tv_sec;
+        long elapsedMicroseconds = currentTime.tv_usec - lastSendTime.tv_usec;
+        long totalElapsed = elapsedSeconds * 1000000 + elapsedMicroseconds;
+
+        return totalElapsed >= (timeoutSeconds * 1000000);
+    }
+
     // ========== CENTRALIZED CLEANUP FUNCTIONS ==========
-    
+
     void deleteSegment(Segment* seg) {
         if(!seg) return;
-        
+
         if(seg->payload) {
             delete[] (char*)seg->payload;
             seg->payload = nullptr;
@@ -208,7 +238,7 @@ private:
     }
     
     void handleFileRequest(Segment* seg, MetaData* meta) {
-        currentSegment = -1;
+        currentSegment = INIT_SEGMENT;
         currentFilename = meta->filename;
         cout << "\n=== Got request for file: " << currentFilename << " ===" << endl;
         
@@ -298,23 +328,32 @@ private:
     
     void sendNextDataSegment() {
         cout << "[sendNextDataSegment] ";
-        if(currentSegment >= fileSegments.size()) {
+        if(currentSegment > fileSegments.size()) {
+            cout << "Segment : " << currentSegment << "[SKIP]" << endl;
+            return;
+        }
+        if(currentSegment == fileSegments.size()) {
             cout << "All segments sent!" << endl;
-            
+
             // send completion message
+            waitingForAck = false;
             sendComplete();
             transferActive = false;
             return;
         }
-        
+
         // get current segment
         Segment* seg = fileSegments[currentSegment];
-        
-        cout << "Sending data segment " << currentSegment 
+
+        cout << "Sending data segment " << currentSegment
              << " (size: " << (seg->header.length - HEADER_SIZE) << " bytes)" << endl;
-        
+
         // send the segment
         sendSegment(seg);
+
+        // start timer
+        gettimeofday(&lastSendTime, nullptr);
+        waitingForAck = true;
     }
 
     void sendComplete(){
@@ -333,11 +372,12 @@ private:
     
     void handleAck(Segment* seg) {
         cout << "Got ACK for segment " << seg->header.seqNumber << endl;
-        
+
         if(seg->header.seqNumber == currentSegment) {
             // correct ACK, move to next segment
+            waitingForAck = false;
             currentSegment++;
-            
+
             if(currentSegment < fileSegments.size()) {
                 sendNextDataSegment();
             } else {
@@ -350,7 +390,7 @@ private:
             }
         } else {
             // wrong ACK sequence
-            cout << "Wrong ACK sequence. Expected: " << currentSegment 
+            cout << "Wrong ACK sequence. Expected: " << currentSegment
                  << ", Got: " << seg->header.seqNumber << " [IGNORE]" << endl;
                 // sendNextDataSegment();
         }
@@ -443,7 +483,7 @@ private:
             
             tryCount++;
         }
-        
+
         cout << "Failed after " << maxRetries << " tries" << endl;
         return false;
     }

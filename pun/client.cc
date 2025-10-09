@@ -14,8 +14,8 @@ private:
     sockaddr_in serverAddr{};
     socklen_t serverLen{};
 
-    int timeoutSec = 1;   // default 1s; can be tuned
-    int maxRetries = 5;   // retry for requests/NAKs
+    int timeoutSec = 10;   // default 1s; can be tuned
+    int maxRetries = 10;   // retry for requests/NAKs
     int expectedSeq = -1;
 
 public:
