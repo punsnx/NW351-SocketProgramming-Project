@@ -36,8 +36,8 @@ private:
     int port;
     int maxRetries;
     int timeoutSeconds;
-    // int dropPercent;
-    // int corruptPercent;
+    int dropPercent;
+    int corruptPercent;
 
 public:
     ReliableUDPServer(int portNum, int drop = 0, int corrupt = 0) : port(portNum), dropPercent(drop), corruptPercent(corrupt) {
@@ -45,19 +45,19 @@ public:
         currentSegment = INIT_SEGMENT;
         transferActive = false;
         waitingForAck = false;
-        maxRetries = 10;
-        timeoutSeconds = 0.99;
+        maxRetries = 1000000;
+        timeoutSeconds = 1;
         serverSocket = -1;
         currentFileData = nullptr;
         currentFileSize = 0;
         serverFilePath = "Files/";
         memset(&lastSendTime, 0, sizeof(lastSendTime));
-        // srand(time(nullptr));
+        srand(time(nullptr));
 
         cout << "=== Simple UDP Server ===" << endl;
         cout << "Port: " << port << endl;
-        // cout << "Drop Simulation: " << dropPercent << "%" << endl;
-        // cout << "Corrupt Simulation: " << corruptPercent << "%" << endl;
+        cout << "Drop Simulation: " << dropPercent << "%" << endl;
+        cout << "Corrupt Simulation: " << corruptPercent << "%" << endl;
         cout << "MAX_PAYLOAD_SIZE: " << MAX_PAYLOAD_SIZE << " bytes" << endl;
         cout << "HEADER_SIZE: " << HEADER_SIZE << " bytes" << endl;
     }
@@ -144,20 +144,36 @@ private:
     Segment* receiveSegment() {
         // create buffer for receiving
         char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
-        
+
         int n = recvfrom(serverSocket, buffer, sizeof(buffer), 0,
                         (sockaddr*)&clientAddr, &clientLen);
-        
+
         if(n <= 0) {
             return nullptr;
         }
-        
+
+        // simulate packet drop
+        if(dropPercent > 0 && (rand() % 100) < dropPercent) {
+            cout << "[SIMULATION] Packet DROPPED (" << dropPercent << "%)" << endl;
+            return nullptr;
+        }
+
+        // simulate packet corruption (only corrupt payload, not header)
+        if(corruptPercent > 0 && (rand() % 100) < corruptPercent && n > sizeof(Header)) {
+            cout << "[SIMULATION] Packet CORRUPTED (" << corruptPercent << "%)" << endl;
+            // corrupt random byte in payload only
+            int payloadStart = sizeof(Header);
+            int payloadLength = n - sizeof(Header);
+            int randomPos = payloadStart + (rand() % payloadLength);
+            buffer[randomPos] ^= 0xFF;
+        }
+
         // create segment from received data
         Segment* seg = new Segment;
-        
+
         // copy header
         memcpy(&seg->header, buffer, sizeof(Header));
-        
+
         // allocate and copy payload
         int payloadSize = seg->header.length - HEADER_SIZE;
         if(payloadSize > 0) {
@@ -168,30 +184,46 @@ private:
         }
 
         cout << "--->> Server receive segment at Sequence Number: " << seg->header.seqNumber << endl;
-        
+
         return seg;
     }
     
     void sendSegment(Segment* seg) {
+        // simulate packet drop
+        if(dropPercent > 0 && (rand() % 100) < dropPercent) {
+            cout << "[SIMULATION] Outgoing packet DROPPED (" << dropPercent << "%)" << endl;
+            return;
+        }
+
         // create buffer to send
         int totalSize = seg->header.length;
         char* buffer = new char[totalSize];
-        
+
         // copy header
         memcpy(buffer, &seg->header, sizeof(Header));
-        
+
         // copy payload if exists
         int payloadSize = seg->header.length - HEADER_SIZE;
         if(payloadSize > 0 && seg->payload) {
             memcpy(buffer + sizeof(Header), seg->payload, payloadSize);
         }
-        
+
+        // simulate packet corruption (only corrupt payload, not header)
+        if(corruptPercent > 0 && (rand() % 100) < corruptPercent && totalSize > sizeof(Header)) {
+            cout << "[SIMULATION] Outgoing packet CORRUPTED (" << corruptPercent << "%)" << endl;
+            // corrupt random byte in payload only
+            int payloadStart = sizeof(Header);
+            int payloadLength = totalSize - sizeof(Header);
+            int randomPos = payloadStart + (rand() % payloadLength);
+            buffer[randomPos] ^= 0xFF;
+        }
+
         // send
         sendto(serverSocket, buffer, totalSize, 0,
                (sockaddr*)&clientAddr, clientLen);
-        
+
         cout << "<<--Server sent segment at Sequence Number: " << seg->header.seqNumber << endl;
-        
+
         delete[] buffer;
     }
     
@@ -498,21 +530,36 @@ private:
 };
 
 int main(int argc, char* argv[]) {
-    if(argc != 2) {
-        cout << "Usage: " << argv[0] << " <port>" << endl;
+    if(argc < 2 || argc > 4) {
+        cout << "Usage: " << argv[0] << " <port> [drop%] [corrupt%]" << endl;
         cout << "Example: " << argv[0] << " 8080" << endl;
+        cout << "Example: " << argv[0] << " 8080 10 5" << endl;
+        cout << "  drop%    : 0-100 (default 0)" << endl;
+        cout << "  corrupt% : 0-100 (default 0)" << endl;
         return 1;
     }
-    
+
     int port = atoi(argv[1]);
-    
-    ReliableUDPServer server(port);
-    
+    int dropPercent = (argc >= 3) ? atoi(argv[2]) : 0;
+    int corruptPercent = (argc >= 4) ? atoi(argv[3]) : 0;
+
+    // validate percentages
+    if(dropPercent < 0 || dropPercent > 100) {
+        cout << "Error: drop% must be between 0-100" << endl;
+        return 1;
+    }
+    if(corruptPercent < 0 || corruptPercent > 100) {
+        cout << "Error: corrupt% must be between 0-100" << endl;
+        return 1;
+    }
+
+    ReliableUDPServer server(port, dropPercent, corruptPercent);
+
     if(!server.init()) {
         return 1;
     }
-    
+
     server.start();
-    
+
     return 0;
 }

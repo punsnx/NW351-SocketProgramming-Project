@@ -15,7 +15,7 @@ private:
     socklen_t serverLen{};
 
     int timeoutSec = 10;   // default 1s; can be tuned
-    int maxRetries = 10;   // retry for requests/NAKs
+    int maxRetries = 1000000;   // retry for requests/NAKs
     int expectedSeq = -1;
 
 public:
