@@ -315,7 +315,6 @@ private:
         
         // send the segment
         sendSegment(seg);
-        // sendSegmentReliable(seg);
     }
 
     void sendComplete(){
