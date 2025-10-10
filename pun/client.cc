@@ -254,7 +254,7 @@ public:
                 cout << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
                 << " (expecting seq " << expectedSeq << ")\n";
                 // sendNAK(expectedSeq);
-                continue;
+                return false;
             }
             retryCount = 0;
 
