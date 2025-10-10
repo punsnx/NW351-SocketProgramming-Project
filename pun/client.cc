@@ -14,12 +14,16 @@ private:
     sockaddr_in serverAddr{};
     socklen_t serverLen{};
 
-    int timeoutSec = 10;   // default 1s; can be tuned
-    int maxRetries = 1000000;   // retry for requests/NAKs
+    double timeoutSec = 0.000002;   // default 1s; can be tuned
+    int maxRetries = 1000;   // retry for requests/NAKs
     int expectedSeq = -1;
 
+    int dropPercent;  
+    int corruptPercent;
 public:
-    ReliableUDPClient(const string& serverIp, int port) {
+    ReliableUDPClient(const string& serverIp, int port, int dropP, int corruptP)
+    : dropPercent(dropP), corruptPercent(corruptP)
+    {
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         if (sockfd < 0) {
             perror("socket");
@@ -39,6 +43,8 @@ public:
 
         cout << "=== Simple UDP Client ===\n";
         cout << "Server: " << serverIp << ":" << port << "\n";
+        cout << "DROP_PERCENT: " << dropPercent << "%\n";
+        cout << "CORRUPT_PERCENT: " << corruptPercent << "%\n";
         cout << "MAX_PAYLOAD_SIZE (local compile-time): " << MAX_PAYLOAD_SIZE << " bytes\n";
         cout << "HEADER_SIZE: " << HEADER_SIZE << " bytes\n";
     }
@@ -64,14 +70,14 @@ public:
         // }
 
         int r = rand() % 100; // ได้ค่า 0-99
-        if (r < DROP_PERCENT)  {
+        if (r < dropPercent)  {
             cout << "[SIMULATED DROP] Dropping segment " << seg->header.seqNumber << endl;
             return false; // ไม่ส่งออกไป
         }
 
 
         int c = rand() % 100;
-        if (c < CORRUPT_PERCENT) {
+        if (c < corruptPercent) {
             cout << "[SIMULATED CORRUPTION] Corrupting segment " << seg->header.seqNumber << endl;
 
             // ตัวอย่าง: แก้ไข checksum (ทำให้ผิดแน่ ๆ)
@@ -102,15 +108,55 @@ public:
         return true;
     }
 
+    // Segment* receiveSegment() {
+    //     char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
+    //     sockaddr_in from{}; 
+    //     socklen_t fromLen = sizeof(from);
+    //     int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
+    //     if (n <= 0) return nullptr; // timeout or error
+
+    //     Segment* seg = new Segment;
+    //     memcpy(&seg->header, buffer, sizeof(Header));
+    //     int payloadSize = seg->header.length - HEADER_SIZE;
+    //     if (payloadSize > 0) {
+    //         seg->payload = new char[payloadSize];
+    //         memcpy(seg->payload, buffer + sizeof(Header), payloadSize);
+    //     } else {
+    //         seg->payload = nullptr;
+    //     }
+    //     cout << "--->> Client receive segment of Sequence Number: " << seg->header.seqNumber << endl;
+
+    //     return seg;
+    // }
+
     Segment* receiveSegment() {
+        // double timeoutSec = 1;
+        // ตั้งค่า timeout สำหรับ recvfrom
+        struct timeval tv;
+        tv.tv_sec = (time_t)timeoutSec; // integer part
+        tv.tv_usec = (suseconds_t)((timeoutSec - tv.tv_sec) * 1e6);
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
+            perror("setsockopt failed");
+            return nullptr;
+        }
+
         char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
-        sockaddr_in from{}; 
+        sockaddr_in from{};
         socklen_t fromLen = sizeof(from);
+
         int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
-        if (n <= 0) return nullptr; // timeout or error
+        if (n <= 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                cout << "[Timeout] No data received within " << timeoutSec << " seconds" << endl;
+            } else {
+                perror("recvfrom error");
+            }
+            return nullptr;
+        }
 
         Segment* seg = new Segment;
         memcpy(&seg->header, buffer, sizeof(Header));
+
         int payloadSize = seg->header.length - HEADER_SIZE;
         if (payloadSize > 0) {
             seg->payload = new char[payloadSize];
@@ -118,10 +164,13 @@ public:
         } else {
             seg->payload = nullptr;
         }
-        cout << "--->> Client receive segment of Sequence Number: " << seg->header.seqNumber << endl;
+
+        cout << "--->> Client received segment, Seq#: " << seg->header.seqNumber 
+            << " (Payload: " << payloadSize << " bytes)" << endl;
 
         return seg;
     }
+
 
     void sendACK(int seq) {
         MetaData meta{}; meta.type = TYPE_ACK;
@@ -131,12 +180,15 @@ public:
         // if(sendSegment(ack)) {
         // }
         
-        while(true) {
-            if (sendSegment(ack)) {
-                cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
-                break;
-            }
-        }
+        sendSegment(ack);
+        cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
+
+        // while(true) {
+        //     if (sendSegment(ack)) {
+        //         cout << "<<--- Client send ACK for Sequence Number:" << seq << endl;
+        //         break;
+        //     }
+        // }
 
         delete ack; // payload points to stack memory (meta), do not delete
     }
@@ -149,12 +201,15 @@ public:
         // if(sendSegment(nak)) {
         // }
 
-        while(true) {
-            if (sendSegment(nak)) {
-                cout << "[INFO] Client send NAK for Sequence Number:" << seq << endl;
-                break;
-            }
-        }
+        sendSegment(nak);
+        cout << "[INFO] Client send NAK for Sequence Number:" << seq << endl;
+
+        // while(true) {
+        //     if (sendSegment(nak)) {
+        //         cout << "[INFO] Client send NAK for Sequence Number:" << seq << endl;
+        //         break;
+        //     }
+        // }
 
         delete nak; // payload points to stack memory (meta), do not delete
     }
@@ -174,11 +229,12 @@ public:
 
         cout << "[INFO] Sending request for file: " << filename << endl;
 
-        while(true) {
-            if (sendSegment(request)) {
-                break;
-            }
-        }
+        // while(true) {
+        //     if (sendSegment(request)) {
+        //         break;
+        //     }
+        // }
+        sendSegment(request);
 
         delete request;
 
@@ -192,7 +248,7 @@ public:
             if (!seg) {
                 if (retryCount >= maxRetries) {
                     cout << "[ERROR] Max retries exceeded. Aborting.\n";
-                    exit(1);
+                    return false;
                 }
                 retryCount++;
                 cout << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
@@ -231,12 +287,13 @@ public:
                         return false;
                     } else {
                         cout << "[ERROR] Server did not send First ACK\n";
-                        cout << "[Debug] fileExists=" << meta->fileExists
+                        cout << "[Debug] meta->type=" << meta->type <<",fileExists=" << meta->fileExists
                             << ", fileSize=" << meta->fileSize
                             << ", totalSegments=" << meta->totalSegments
                             << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << ", fileName=" << meta->filename << endl;
                         // sendNAK(expectedSeq);
-                        continue;
+                        // continue;
+                        return false;
                     }
                 } 
             } else {
@@ -497,21 +554,25 @@ private:
 
 
 int main(int argc, char* argv[]) {
-    if (argc < 4) {
-        cout << "Usage: " << argv[0] << " <server_ip> <port> <file1> [file2 ...]" << endl;
-        return 1;
-    }
+    if (argc < 6) {
+            cout << "Usage: " << argv[0] 
+                << " <server_ip> <port> <drop_percent> <corrupt_percent> <file1> [file2 ...]" 
+                << endl;
+            return 1;
+        }
 
     string serverIp = argv[1];
     int port = atoi(argv[2]);
+    int dropPercent = atoi(argv[3]);
+    int corruptPercent = atoi(argv[4]);
 
     try {
-        ReliableUDPClient client(serverIp, port);
+        ReliableUDPClient client(serverIp, port, dropPercent, corruptPercent);
 
-        int filesCount = argc - 3;
+        int filesCount = argc - 5;
         bool multiFiles = (filesCount > 1);
 
-        for (int i = 3; i < argc; ++i) {
+        for (int i = 5; i < argc; ++i) {
             string fname = argv[i];
             MetaData resp{}; 
 

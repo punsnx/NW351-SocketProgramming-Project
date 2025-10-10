@@ -35,7 +35,7 @@ private:
     // server config
     int port;
     int maxRetries;
-    int timeoutSeconds;
+    double timeoutSeconds;
     int dropPercent;
     int corruptPercent;
 
@@ -45,8 +45,8 @@ public:
         currentSegment = INIT_SEGMENT;
         transferActive = false;
         waitingForAck = false;
-        maxRetries = 1000000;
-        timeoutSeconds = 1;
+        maxRetries = 1000;
+        timeoutSeconds = 0.000001;
         serverSocket = -1;
         currentFileData = nullptr;
         currentFileSize = 0;
@@ -475,8 +475,12 @@ private:
             
             // set timeout
             struct timeval tv;
-            tv.tv_sec = timeoutSeconds;
-            tv.tv_usec = 0;
+            // tv.tv_sec = timeoutSeconds;
+            // tv.tv_usec = 0;
+
+            tv.tv_sec = (time_t)timeoutSeconds; // integer part
+            tv.tv_usec = (suseconds_t)((timeoutSeconds - tv.tv_sec) * 1e6); // fractional part to microseconds
+
             setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             
             // wait for response
