@@ -45,7 +45,7 @@ public:
         currentSegment = INIT_SEGMENT;
         transferActive = false;
         waitingForAck = false;
-        maxRetries = 1000;
+        maxRetries = 1000000000;
         timeoutSeconds = 0.000001;
         serverSocket = -1;
         currentFileData = nullptr;

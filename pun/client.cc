@@ -15,8 +15,10 @@ private:
     socklen_t serverLen{};
 
     double timeoutSec = 0.000002;   // default 1s; can be tuned
-    int maxRetries = 1000;   // retry for requests/NAKs
+    int maxRetries = 1000000000;   // retry for requests/NAKs
     int expectedSeq = -1;
+    
+    
 
     int dropPercent;  
     int corruptPercent;
@@ -130,24 +132,24 @@ public:
     // }
 
     Segment* receiveSegment() {
-        // double timeoutSec = 1;
-        // ตั้งค่า timeout สำหรับ recvfrom
+        char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
+
+        // ✅ ตั้งค่า timeout ให้ recvfrom
         struct timeval tv;
         tv.tv_sec = (time_t)timeoutSec; // integer part
-        tv.tv_usec = (suseconds_t)((timeoutSec - tv.tv_sec) * 1e6);
+            tv.tv_usec = (suseconds_t)((timeoutSec - tv.tv_sec) * 1e6);
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
             perror("setsockopt failed");
             return nullptr;
         }
 
-        char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
         sockaddr_in from{};
         socklen_t fromLen = sizeof(from);
 
         int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
         if (n <= 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                cout << "[Timeout] No data received within " << timeoutSec << " seconds" << endl;
+                cout << "[Timeout] No data received within 1 second" << endl;
             } else {
                 perror("recvfrom error");
             }
@@ -165,11 +167,12 @@ public:
             seg->payload = nullptr;
         }
 
-        cout << "--->> Client received segment, Seq#: " << seg->header.seqNumber 
-            << " (Payload: " << payloadSize << " bytes)" << endl;
+        cout << "--->> Client received segment of Sequence Number: "
+            << seg->header.seqNumber << " (Payload: " << payloadSize << " bytes)" << endl;
 
         return seg;
     }
+
 
 
     void sendACK(int seq) {
@@ -240,23 +243,28 @@ public:
 
         expectedSeq = -1;
         
-        int retryCount = 0;
+        
         bool serverRespond = false;
 
         while (true) {
             Segment* seg = receiveSegment();
+
             if (!seg) {
-                if (retryCount >= maxRetries) {
-                    cout << "[ERROR] Max retries exceeded. Aborting.\n";
-                    return false;
-                }
-                retryCount++;
-                cout << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
-                << " (expecting seq " << expectedSeq << ")\n";
-                // sendNAK(expectedSeq);
                 return false;
             }
-            retryCount = 0;
+
+            // if (!seg) {
+            //     if (retryCount >= maxRetries) {
+            //         cout << "[ERROR] Max retries exceeded. Aborting.\n";
+            //         return false;
+            //     }
+            //     retryCount++;
+            //     cout << "[TIMEOUT] Waiting for First ACK, retry " << retryCount << "/" << maxRetries
+            //     << " (expecting seq " << expectedSeq << ")\n";
+            //     // sendNAK(expectedSeq);
+            //     return false;
+            // }
+            // retryCount = 0;
 
             // isCorrupt?
             unsigned short recvChk = seg->header.checkSum;
@@ -316,18 +324,22 @@ public:
 
         while (true) {
             Segment* seg = receiveSegment();
+
             if (!seg) {
-                retryCount++;
-                cout << "[TIMEOUT] Waiting for RESPONSE, retry " << retryCount << "/" << maxRetries
-                    << " (expecting seq " << expectedSeq << ")\n";
-                if (retryCount >= maxRetries) {
-                    cout << "[ERROR] Max retries exceeded. Aborting.\n";
-                    exit(1);
-                }
-                // sendNAK(expectedSeq);
-                continue;
+                return false;
             }
-            retryCount = 0;
+            // if (!seg) {
+            //     retryCount++;
+            //     cout << "[TIMEOUT] Waiting for RESPONSE, retry " << retryCount << "/" << maxRetries
+            //         << " (expecting seq " << expectedSeq << ")\n";
+            //     if (retryCount >= maxRetries) {
+            //         cout << "[ERROR] Max retries exceeded. Aborting.\n";
+            //         exit(1);
+            //     }
+            //     // sendNAK(expectedSeq);
+            //     continue;
+            // }
+            // retryCount = 0;
 
             // isCorrupt?
             unsigned short recvChk = seg->header.checkSum;
@@ -397,17 +409,22 @@ public:
 
         while(true) {
             Segment* seg = receiveSegment();
-            if(!seg) {
-                if (retryCount >= maxRetries) {
-                    cout << "[ERROR] Max retries exceeded. Aborting.\n";
-                    exit(1);
-                }
-                cout << "[TIMEOUT] No segment received for seq " << expectedSeq << ", sending NAK\n";
-                // sendNAK(expectedSeq);
-                retryCount++;
+
+            if (!seg) {
                 continue;
             }
-            retryCount = 0;
+
+            // if(!seg) {
+            //     if (retryCount >= maxRetries) {
+            //         cout << "[ERROR] Max retries exceeded. Aborting.\n";
+            //         exit(1);
+            //     }
+            //     cout << "[TIMEOUT] No segment received for seq " << expectedSeq << ", sending NAK\n";
+            //     // sendNAK(expectedSeq);
+            //     retryCount++;
+            //     continue;
+            // }
+            // retryCount = 0;
 
             // isCorrupt?
             unsigned short recvChk = seg->header.checkSum;
@@ -575,18 +592,26 @@ int main(int argc, char* argv[]) {
         for (int i = 5; i < argc; ++i) {
             string fname = argv[i];
             MetaData resp{}; 
+            int retryCount = 0;
 
+
+            // ตื่นมาจัดการ retry หน่อย
             while (!client.requestFile(fname, resp)) {
                 cout << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << ", resent REQUEST..." << endl;
+                retryCount++;
                 // if (!multiFiles) return 1;
                 // continue;
             }
-
-            if (!client.receiveMeta(fname, resp)) {
+            retryCount = 0;
+            
+            while (!client.receiveMeta(fname, resp)) {
                 cout << "[ERROR] Failed to receive RESPONSE metadata for file: " << fname << endl;
-                if (!multiFiles) return 1;
-                continue;
+                retryCount++;
+                // cout << "Retry " << retryCount << "/" << 
+                // if (!multiFiles) return 1;
+                // continue;
             }
+            retryCount =0;
 
             
             
@@ -617,8 +642,7 @@ int main(int argc, char* argv[]) {
             string effectiveName = (resp.filename[0] ? string(resp.filename) : fname);
             if (!client.receiveFile(effectiveName, resp.totalSegments)) {
                 cout << "[ERROR] Failed while receiving file: " << effectiveName << endl;
-                if (!multiFiles) 
-                return 1;
+                if (!multiFiles) return 1;
             }
         }
     } catch (const exception& ex) {
