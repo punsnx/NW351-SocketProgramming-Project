@@ -28,6 +28,7 @@ private:
     bool transferActive;
     struct timeval lastSendTime;
     bool waitingForAck;
+    int retryCount;
 
     string serverFilePath;
     string currentFilename;
@@ -45,7 +46,8 @@ public:
         currentSegment = INIT_SEGMENT;
         transferActive = false;
         waitingForAck = false;
-        maxRetries = 1000000000;
+        retryCount = 0;
+        maxRetries = 100;
         timeoutSeconds = 0.000001;
         serverSocket = -1;
         currentFileData = nullptr;
@@ -89,8 +91,17 @@ public:
         while(true) {
             // check timeout if transfer is active
             if(transferActive && waitingForAck && checkTimeout()) {
-                cout << "[Global Timeout] Resending current segment : " << currentSegment << endl;
-                sendNextDataSegment();
+                retryCount++;
+                if(retryCount >= maxRetries) {
+                    cout << "[Global Timeout] Max retries (" << maxRetries << ") reached for segment " << currentSegment << ", aborting transfer" << endl;
+                    transferActive = false;
+                    waitingForAck = false;
+                    retryCount = 0;
+                    cleanupSegments();
+                } else {
+                    cout << "[Global Timeout] Resending current segment : " << currentSegment << " (retry " << retryCount << "/" << maxRetries << ")" << endl;
+                    sendNextDataSegment();
+                }
             }
 
             Segment* receivedSeg = receiveSegment();
@@ -408,6 +419,7 @@ private:
         if(seg->header.seqNumber == currentSegment) {
             // correct ACK, move to next segment
             waitingForAck = false;
+            retryCount = 0;
             currentSegment++;
 
             if(currentSegment < fileSegments.size()) {
