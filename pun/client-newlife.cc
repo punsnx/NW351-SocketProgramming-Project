@@ -15,7 +15,7 @@ private:
     socklen_t serverLen{};
 
     double timeoutSec = 0.000004;   // default 1s; can be tuned
-    int maxRetries = 100000;   // retry for requests/NAKs
+    int maxRetries = 10000;   // retry for requests/NAKs
     int expectedSeq = -1; 
 
     int dropPercent;  
@@ -647,7 +647,7 @@ public:
                 continue;
             }
 
-            cout << "[Debug B] seg->header.seqNumber= "  << seg->header.seqNumber <<
+            cout << "[Debug B delete] seg->header.seqNumber= "  << seg->header.seqNumber <<
             ", expectedSeq = " << expectedSeq << endl;
             MetaData* meta = (MetaData*)seg->payload;
             cout << "[Debug] Server response: fileExists=" << meta->fileExists << ", fileSize=" << meta->fileSize << ", totalSegments=" << meta->totalSegments << ", maxPayload=" << meta->maxPayloadSize << ", type=" << meta->type << ", fileName=" << meta->filename << endl;
@@ -668,6 +668,7 @@ public:
                         sendACK(seg->header.seqNumber);
 
                         cleanup(seg);
+                        cout << "[Debug] got TYPE_COMPLETE" << endl; 
                         cout << "[SUCCESS] receiveNonExist success" << endl;
                         return true;
                     }
@@ -724,6 +725,7 @@ int main(int argc, char* argv[]) {
             MetaData resp{}; 
             
             // int retryCount = 0;
+            client.resetTryCount();
 
             if(!client.requestFile(fname, resp)) {
                 return 1;
