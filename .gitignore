@@ -390,3 +390,4 @@ $RECYCLE.BIN/
 .idea/
 
 *.log
+!*.rar
