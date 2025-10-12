@@ -10,38 +10,37 @@
 ## 📁 โครงสร้างไฟล์ของโปรเจกต์
 
 ```
-pun
+.
+├── Files
+│   ├── cap.mp4
+│   ├── cat.txt
+│   ├── ckwVibe.mp4
+│   ├── file.txt
+│   ├── file2.txt
+│   ├── file3.txt
+│   ├── file4.txt
+│   ├── hello.txt
+│   ├── history.txt
+│   └── img1.jpg
+├── Makefile
+├── README.md
+├── TEST_PARAMS.txt
 ├── checksum.cc
 ├── client.cc
-├── clientFiles
-│   └── file.txt
-├── client.log
-├── client.out
 ├── file-handler.cc
-├── Files
-│   ├── cap.mp4
-│   ├── file2.txt
-│   ├── file3.txt
-│   ├── file4.txt
-│   ├── file.txt
-│   ├── hello.txt
-│   ├── history.txt
-│   └── img1.jpg
 ├── header
-│   ├── checksum.h
-│   ├── client.h
-│   ├── file-handler.h
-│   ├── packetize.h
-│   ├── project-header.h
-│   ├── segment.h
-│   └── simulate.h
-├── main.cc
-├── Makefile
-├── mock.cc
+│   ├── checksum.h
+│   ├── client.h
+│   ├── file-handler.h
+│   ├── packetize.h
+│   ├── project-header.h
+│   ├── segment.h
+│   └── simulate.h
 ├── packetize.cc
-├── server.log
-├── server-newlife.cc
-└── server.out
+├── release-test-logs
+│   └── release-test-logs.rar
+├── server.cc
+└── test.sh
 ```
 
 ---
@@ -83,10 +82,29 @@ $ make clean
 
 - ต้องมี folder ชื่อ **_files_** สำหรับ server เพื่อเก็บไฟล์
 
-![alt text](image-5.png)
+![alt text](/images/image-5.png)
 - ต้องมี folder ชื่อ **_clientFiles_** สำหรับ client เพื่อเก็บไฟล์
 
-![alt text](image-6.png)
+![alt text](/images/image-6.png)
+
+## 📜 ตัวอย่างไฟล์ในการทดสอบ
+ผู้ทดสอบสามาถเลือกไฟล์สำหรับการทดสอบในโฟลเดอร์ Files โดยมีไฟล์ดังนี้
+```
+- cap.mp4
+- ckwVibe.mp4
+- file2.txt
+- file4.txt
+- history.txt
+- cat.txt
+- file.txt
+- file3.txt
+- hello.txt
+- img1.jpg
+```
+
+หมายเหตุ ผู้ทดสอบสามารถเพิ่มไฟล์เองใน directory Files ได้เช่นกัน
+
+![alt text](/images/image-29.png)
 
 ### 🔧 การรันโปรแกรมฝั่ง Server
 
@@ -101,6 +119,9 @@ $ make clean
 2. <drop_percentage> เป็นร้อยละข้อง packet เพื่อจำลองการ drop ใน server หากไม่ใส่จะมีต่าเริ่มต้นเป็น 0
 3. <corrupt_percentage> เป็นร้อยละข้อง packet เพื่อจำลองการ corrupt ใน server หากไม่ใส่จะมีต่าเริ่มต้นเป็น 0
 ```
+**_EXAMPLE_**
+
+`./server.out 8080 0 0` หรือ `./server.out 8080 0 0 > server.log` หากต้องการเก็บผลลัพธ์ลงในไฟล์ `server.log`
 
 ### 🔧 การรันโปรแกรมฝั่ง Client
 
@@ -113,67 +134,77 @@ $ make clean
 ```
 1. <ip_address> เป็นหมายเลขของ server ip address ที่ใช้ในการเชื่อมต่อ
 2. <port> เป็นหมายเลขของ server port ที่ใช้ในการเชื่อมต่อ
-3. <drop_percentage> เป็นร้อยละข้อง packet เพื่อจำลองการ drop ใน server
-4. <corrupt_percentage> เป็นร้อยละข้อง packet เพื่อจำลองการ corrupt ใน server
+3. <drop_percentage> เป็นร้อยละข้อง Drop Percentage เพื่อจำลองการ drop ใน server เป็นจำนวนเต็ม
+4. <corrupt_percentage> เป็นร้อยละของ Corrupt Percentage เพื่อจำลองการ corrupt ใน server เป็นจำนวนเต็ม
 5. <files> เป็นชื่อไฟล์ที่ต้องการจากร้องขอจาก server (มีได้มากกว่า 1 ไฟล์ ขั้นด้วยช่องว่าง)
 ```
+**_EXAMPLE_**
 
+`./client.out 127.0.0.1 8080 5 5 file1.txt file2.txt` 
+หรือ `./client.out 127.0.0.1 8080 5 5 file1.txt file2.txt > client.log` หากต้องการเก็บผลลัพธ์ลงในไฟล์ `client.log`
 
-## 📜 ตัวอย่างภาพจำลองการทำงาน (Mock-up)
+## 💻 ตัวอย่างภาพจำลองการทำงาน (Mock-up)
 ภาพแสดงการสื่อสารระหว่าง Client และ Server
 โดยมีการส่งไฟล์ผ่าน Socket และตรวจสอบข้อมูลด้วย Checksum การรันโปรแกรม
 
-1. เปิดฝั่ง Server เริ่มต้นรับการเชื่อมต่อ
-   $ ./server.out 8080 0 0
+### 1. Compile
+`$ make clean` ตามด้วย `$ make all`
 
-![alt text](image-14.png)
+![alt text](/images/image-30.png)
+
+
+### 2. เปิด Terminal ฝั่ง Server เริ่มต้นรับการเชื่อมต่อ 
+`./server.out 8080 0 0` หรือ `./server.out 8080 0 0 > server.log` 
+
 
 แสดงข้อความรอการเชื่อมต่อจาก client และ
 บันทึก log ลงใน server.log
 
-![alt text](image-17.png)
+![alt text](/images/image-17.png)
 
-2. เปิดฝั่ง Client ขอไฟล์ (อีก terminal หนึ่ง)
-
-   $ ./client.out 8080 0 0 file.txt
+### 3. เปิด Terminal ฝั่ง Client ขอไฟล์ (อีก terminal หนึ่ง)
+`./client.out 127.0.0.1 8080 5 5 file1.txt file2.txt` 
+หรือ `./client.out 127.0.0.1 8080 5 5 file1.txt file2.txt > client.log` 
 
 (เลือกไฟล์จากโฟลเดอร์ Files/ (กรณีส่งไฟล์ที่มีอยู่))
 
-![alt text](image-18.png)
 
-![alt text](image-15.png)
+![alt text](/images/image-15.png)
 
 บันทึก log ลงใน client.log
 
-![alt text](image-19.png)
+![alt text](/images/image-19.png)
 
-3. Server ตรวจไฟล์ว่ามีอยู่จริง → ส่ง Metadata RESPONSE 
+ตัวอย่างการเปิด 2 terminal
+![alt text](/images/image-31.png)
+
+
+### 4. Server ตรวจไฟล์ว่ามีอยู่จริง → ส่ง Metadata RESPONSE 
 
 ตอบกลับสถานะให้ client ทราบ
 
-![alt text](image-13.png)
+![alt text](/images/image-13.png)
  
-4. Client รับ RESPONSE แล้วส่ง ACK กลับ
+### 5. Client รับ RESPONSE แล้วส่ง ACK กลับ
 
-![alt text](image-20.png)
+![alt text](/images/image-20.png)
 
-5. Server ส่งข้อมูลไฟล์ data segment
+### 6. Server ส่งข้อมูลไฟล์ data segment
 
-![alt text](image-22.png)
+![alt text](/images/image-22.png)
 
-6. Client รับ segment เก็บบัฟเฟอร์ แล้วส่ง ACK
+### 7. Client รับ segment เก็บลงใน vecter แล้วส่ง ACK
 
-![alt text](image-23.png) 
+![alt text](/images/image-23.png) 
 
-7. Server ส่งสัญญาณจบ (COMPLETE) 
+### 8. Server ส่งสัญญาณจบ (COMPLETE) 
 
-![alt text](image-24.png)
+![alt text](/images/image-24.png)
 
-8. Client รับ COMPLETE แล้วส่ง ACK  → รวมบัฟเฟอร์และบันทึกเป็น clientFiles/file.txt
+### 9. Client รับ COMPLETE แล้วส่ง ACK  → รวม segments และบันทึกใน clientFiles/file.txt
 
-![alt text](image-25.png)
+![alt text](/images/image-25.png)
 
-![alt text](image-27.png)
+![alt text](/images/image-27.png)
 
-![alt text](image-28.png)
-
+![alt text](/images/image-28.png)
