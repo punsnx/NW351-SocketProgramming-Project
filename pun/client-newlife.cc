@@ -220,9 +220,64 @@ public:
             } else {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     cout << "[Timeout] No data received." << endl;
+                    retry++;
                     if (notRetryReceive) {
                         return nullptr;
                     }
+                
+                } else {
+                    perror("recvfrom error");
+                    return nullptr;
+                }
+            }
+        }
+
+        cout << "[ERROR] Max retries reached for receiveSegment\n";
+        return nullptr;
+    }
+
+    Segment* receiveSegmentWithLimit(int limit) {        
+        char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
+
+        // ตั้งค่า timeout ให้ recvfrom
+        struct timeval tv;
+        tv.tv_sec = (time_t)timeoutSec; // integer part
+        tv.tv_usec = (suseconds_t)((timeoutSec - tv.tv_sec) * 1e6);
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
+            perror("setsockopt failed");
+            return nullptr;
+        }
+
+        sockaddr_in from{};
+        socklen_t fromLen = sizeof(from);
+
+        int retry = 0;
+        while (retry < limit) {
+            int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
+            if (n > 0) {
+                retry = 0;  // reset tryCount on successful receive
+                Segment* seg = new Segment;
+                memcpy(&seg->header, buffer, sizeof(Header));
+                int payloadSize = seg->header.length - HEADER_SIZE;
+                if (payloadSize > 0) {
+                    seg->payload = new char[payloadSize];
+                    memcpy(seg->payload, buffer + sizeof(Header), payloadSize);
+                } else {
+                    seg->payload = nullptr;
+                }
+                cout << "--->> Client received segment of Sequence Number: "
+                    << seg->header.seqNumber << " (Payload: " << payloadSize << " bytes)" << endl;
+                return seg;
+            } else {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    cout << "[Timeout] No data received." << endl;
+                    if(retry > limit)
+                    {
+                        cout << "[Debug] Max adjust retries reached for receive segment." << endl;
+                        return nullptr;
+                    }
+                    retry++;
+                
                 } else {
                     perror("recvfrom error");
                     return nullptr;
@@ -290,12 +345,12 @@ public:
         Segment* request = createSegment(&req, -1, sizeof(MetaData));
         request->header.checkSum = calculateChecksum(request);
 
-        expectedSeq = -1;
         bool serverRespond = false;
-
+        
         // tryCount = 0; // เริ่มนับ retry
-
+        
         while (!serverRespond && tryCount < maxRetries) {
+            expectedSeq = -1;
             tryCount++;
             cout << "[INFO] Sending request for file: " << filename 
                 << " (Attempt " << tryCount << "/" << maxRetries << ")\n";
@@ -603,12 +658,39 @@ public:
                 sendNAK(expectedSeq);
             }
 
+            
             cleanup(seg);
+        }
+        
+        
+        writeFile(filepath, buf.data(), static_cast<int>(buf.size()));
+        cout << "[INFO] File saved to: " << filepath << "\n";
+        
+        // receive until server not sent anything
+        while (true) {
+            int limit = 5;
+            Segment* seg = receiveSegmentWithLimit(limit);
+
+            if (seg == nullptr) {
+                cout << "[Debug] Ready to send next file request" << endl;
+                return true;
+            }
+
+            MetaData* meta = (MetaData*)seg->payload;
+
+            if (meta->type == TYPE_COMPLETE && meta->filename == filename) {
+                cout << "[Debug] clean server" << endl;
+                sendACK(seg->header.seqNumber);
+
+                // cleanup(seg);   // ปิด resource ให้เรียบร้อย
+                // cout << "[Debug] File transfer complete" << endl;
+                // return true;
+            }
+
+            cleanup(seg); // กัน memory leak
         }
 
 
-        writeFile(filepath, buf.data(), static_cast<int>(buf.size()));
-        cout << "[INFO] File saved to: " << filepath << "\n";
         return true;
     }
 
