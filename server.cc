@@ -1,0 +1,584 @@
+#include <iostream>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <cstring>
+#include <vector>
+#include <sstream>
+#include <sys/time.h>
+#include "header/project-header.h"
+
+using namespace std;
+
+#define INIT_SEGMENT -1
+
+class ReliableUDPServer {
+private:
+    int serverSocket;
+    sockaddr_in serverAddr;
+    sockaddr_in clientAddr;
+    socklen_t clientLen;
+    
+    // file transfer state
+    vector<Segment*> fileSegments;
+    char* currentFileData;
+    int currentFileSize;
+    int currentSegment;
+    bool transferActive;
+    struct timeval lastSendTime;
+    bool waitingForAck;
+    int retryCount;
+
+    string serverFilePath;
+    string currentFilename;
+
+    // server config
+    int port;
+    int maxRetries;
+    double timeoutSeconds;
+    int dropPercent;
+    int corruptPercent;
+
+public:
+    ReliableUDPServer(int portNum, int drop = 0, int corrupt = 0) : port(portNum), dropPercent(drop), corruptPercent(corrupt) {
+        clientLen = sizeof(clientAddr);
+        currentSegment = INIT_SEGMENT;
+        transferActive = false;
+        waitingForAck = false;
+        retryCount = 0;
+        maxRetries = 100000;
+        timeoutSeconds = 0.000001;
+        serverSocket = -1;
+        currentFileData = nullptr;
+        currentFileSize = 0;
+        serverFilePath = "Files/";
+        memset(&lastSendTime, 0, sizeof(lastSendTime));
+        srand(time(nullptr));
+
+        cout << "=== Simple UDP Server ===" << endl;
+        cout << "Port: " << port << endl;
+        cout << "Drop Simulation: " << dropPercent << "%" << endl;
+        cout << "Corrupt Simulation: " << corruptPercent << "%" << endl;
+        cout << "MAX_PAYLOAD_SIZE: " << MAX_PAYLOAD_SIZE << " bytes" << endl;
+        cout << "HEADER_SIZE: " << HEADER_SIZE << " bytes" << endl;
+    }
+    
+    bool init() {
+        serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
+        if(serverSocket < 0) {
+            cout << "Error: Cannot create socket" << endl;
+            return false;
+        }
+        
+        memset(&serverAddr, 0, sizeof(serverAddr));
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_addr.s_addr = INADDR_ANY;
+        serverAddr.sin_port = htons(port);
+        
+        if(::bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+            cout << "Error: Cannot bind to port " << port << endl;
+            return false;
+        }
+        setRecvTimeout(timeoutSeconds);
+        
+        cout << "Server listening on port " << port << "..." << endl;
+        return true;
+    }
+    
+    void start() {
+        cout << "Waiting for client requests..." << endl;
+
+        while(true) {
+            // check timeout if transfer is active
+            if(transferActive && waitingForAck && checkTimeout()) {
+                retryCount++;
+                if(retryCount >= maxRetries) {
+                    cout << "[Global Timeout] Max retries (" << maxRetries << ") reached for segment " << currentSegment << ", aborting transfer" << endl;
+                    transferActive = false;
+                    waitingForAck = false;
+                    retryCount = 0;
+                    cleanupSegments();
+                } else {
+                    cout << "[Global Timeout] Resending current segment : " << currentSegment << " (retry " << retryCount << "/" << maxRetries << ")" << endl;
+                    sendNextDataSegment();
+                }
+            }
+
+            Segment* receivedSeg = receiveSegment();
+
+            if(receivedSeg) {
+                handleSegment(receivedSeg);
+            }
+        }
+    }
+
+private:
+    // ========== TIMER FUNCTIONS ==========
+
+    void setRecvTimeout(double seconds){
+        // set timeout
+        struct timeval tv;
+        // Split into seconds and microseconds
+        tv.tv_sec = (time_t)timeoutSeconds; // integer part
+        tv.tv_usec = (suseconds_t)((timeoutSeconds - tv.tv_sec) * 1e6); // fractional part to microseconds
+        setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
+
+    bool checkTimeout() {
+        struct timeval currentTime;
+        gettimeofday(&currentTime, nullptr);
+
+        long elapsedSeconds = currentTime.tv_sec - lastSendTime.tv_sec;
+        long elapsedMicroseconds = currentTime.tv_usec - lastSendTime.tv_usec;
+        long totalElapsed = elapsedSeconds * 1000000 + elapsedMicroseconds;
+
+        return totalElapsed >= (timeoutSeconds * 1000000);
+    }
+
+    // ========== CENTRALIZED CLEANUP FUNCTIONS ==========
+
+    void deleteSegment(Segment* seg) {
+        if(!seg) return;
+
+        if(seg->payload) {
+            delete[] (char*)seg->payload;
+            seg->payload = nullptr;
+        }
+        delete seg;
+    }
+    
+    void deleteSegmentKeepPayload(Segment* seg) {
+        if(!seg) return;
+        delete seg;
+    }
+    
+    Segment* createSegmentWithPayload(void* data, int seqNum, int dataSize) {
+        char* payload = new char[dataSize];
+        memcpy(payload, data, dataSize);
+        Segment* seg = createSegment(payload, seqNum, dataSize);
+        return seg;
+    }
+    
+    // ===================================================
+    
+    Segment* receiveSegment() {
+        // create buffer for receiving
+        char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
+
+        int n = recvfrom(serverSocket, buffer, sizeof(buffer), 0,
+                        (sockaddr*)&clientAddr, &clientLen);
+
+        if(n <= 0) {
+            return nullptr;
+        }
+
+        // simulate packet drop
+        if(dropPercent > 0 && (rand() % 100) < dropPercent) {
+            cout << "[SIMULATION] Packet DROPPED (" << dropPercent << "%)" << endl;
+            return nullptr;
+        }
+
+        // simulate packet corruption (only corrupt payload, not header)
+        if(corruptPercent > 0 && (rand() % 100) < corruptPercent && n > sizeof(Header)) {
+            cout << "[SIMULATION] Packet CORRUPTED (" << corruptPercent << "%)" << endl;
+            // corrupt random byte in payload only
+            int payloadStart = sizeof(Header);
+            int payloadLength = n - sizeof(Header);
+            int randomPos = payloadStart + (rand() % payloadLength);
+            buffer[randomPos] ^= 0xFF;
+        }
+
+        // create segment from received data
+        Segment* seg = new Segment;
+
+        // copy header
+        memcpy(&seg->header, buffer, sizeof(Header));
+
+        // allocate and copy payload
+        int payloadSize = seg->header.length - HEADER_SIZE;
+        if(payloadSize > 0) {
+            seg->payload = new char[payloadSize];
+            memcpy(seg->payload, buffer + sizeof(Header), payloadSize);
+        } else {
+            seg->payload = nullptr;
+        }
+
+        cout << "--->> Server receive segment at Sequence Number: " << seg->header.seqNumber << endl;
+
+        return seg;
+    }
+    
+    void sendSegment(Segment* seg) {
+        // simulate packet drop
+        if(dropPercent > 0 && (rand() % 100) < dropPercent) {
+            cout << "[SIMULATION] Outgoing packet DROPPED (" << dropPercent << "%)" << endl;
+            return;
+        }
+
+        // create buffer to send
+        int totalSize = seg->header.length;
+        char* buffer = new char[totalSize];
+
+        // copy header
+        memcpy(buffer, &seg->header, sizeof(Header));
+
+        // copy payload if exists
+        int payloadSize = seg->header.length - HEADER_SIZE;
+        if(payloadSize > 0 && seg->payload) {
+            memcpy(buffer + sizeof(Header), seg->payload, payloadSize);
+        }
+
+        // simulate packet corruption (only corrupt payload, not header)
+        if(corruptPercent > 0 && (rand() % 100) < corruptPercent && totalSize > sizeof(Header)) {
+            cout << "[SIMULATION] Outgoing packet CORRUPTED (" << corruptPercent << "%)" << endl;
+            // corrupt random byte in payload only
+            int payloadStart = sizeof(Header);
+            int payloadLength = totalSize - sizeof(Header);
+            int randomPos = payloadStart + (rand() % payloadLength);
+            buffer[randomPos] ^= 0xFF;
+        }
+
+        // send
+        sendto(serverSocket, buffer, totalSize, 0,
+               (sockaddr*)&clientAddr, clientLen);
+
+        cout << "<<--Server sent segment at Sequence Number: " << seg->header.seqNumber << endl;
+       
+
+        delete[] buffer;
+    }
+    
+    void handleSegment(Segment* seg) {
+        cout << endl << "[Debug handleSegment()] Received segment - Seq: " << seg->header.seqNumber 
+             << ", Length: " << seg->header.length << endl;
+        
+        // verify checksum
+        unsigned short receivedChecksum = seg->header.checkSum;
+        seg->header.checkSum = 0;
+        unsigned short calculatedChecksum = calculateChecksum(seg);
+        
+        if(receivedChecksum != calculatedChecksum) {
+            cout << "Segment corrupt! Sending NAK" << endl;
+            sendNAK(seg->header.seqNumber);
+            deleteSegment(seg);
+            return;
+        }
+        
+        // get message type from payload
+        if(seg->payload) {
+            MetaData* meta = (MetaData*)seg->payload;
+            
+            switch(meta->type) {
+                case TYPE_REQUEST:
+                    sendACK(seg->header.seqNumber);
+                    handleFileRequest(seg, meta);
+                    break;
+                    
+                case TYPE_ACK:
+                    handleAck(seg);
+                    break;
+                    
+                case TYPE_NAK:
+                    handleNak(seg);
+                    break;
+                    
+                default:
+                    cout << "Unknown type in segment" << endl;
+            }
+        }
+        
+        deleteSegment(seg);
+    }
+    
+    void handleFileRequest(Segment* seg, MetaData* meta) {
+        currentSegment = INIT_SEGMENT;
+        currentFilename = meta->filename;
+        cout << "\n=== Got request for file: " << currentFilename << " ===" << endl;
+        
+        // cleanup old file data if exists
+        if(currentFileData) {
+            delete[] currentFileData;
+            currentFileData = nullptr;
+        }
+        
+        // read file using your function
+        pair<char*, int> fileData = readFile(serverFilePath + currentFilename);
+        currentFileData = fileData.first;
+        currentFileSize = fileData.second;
+        
+        // prepare response metadata
+        MetaData responseMeta;
+        memset(&responseMeta, 0, sizeof(responseMeta));
+        responseMeta.type = TYPE_RESPONSE;
+        strcpy(responseMeta.filename, currentFilename.c_str());
+        
+        if(currentFileSize > 0) {
+            // file exists
+            responseMeta.fileExists = true;
+            responseMeta.fileSize = currentFileSize;
+            responseMeta.maxPayloadSize = MAX_PAYLOAD_SIZE;
+            
+            // create segments for file
+            cleanupSegments();
+            fileSegments = packetize(currentFileData, currentFileSize, MAX_PAYLOAD_SIZE);
+            responseMeta.totalSegments = fileSegments.size();
+            // responseMeta.totalSegments = fileSegments.size() + 1;
+            
+            cout << "File exists! Size: " << currentFileSize << " bytes" << endl;
+            cout << "Created " << fileSegments.size() << " segments" << endl;
+            
+            transferActive = true;
+        } else {
+            // file doesn't exist
+            responseMeta.fileExists = false;
+            responseMeta.fileSize = 0;
+            responseMeta.totalSegments = 0;
+            // responseMeta.totalSegments = 1;
+            
+            cout << "File does not exist!" << endl;
+            transferActive = false;
+        }
+        
+        // create response segment
+        Segment* response = createSegmentWithPayload(&responseMeta, currentSegment, sizeof(MetaData));
+        response->header.checkSum = calculateChecksum(response);
+        
+        // send response
+        cout << "\n=== Sent Metadata to Client ===" << endl;
+        bool isValidSentMeta = sendSegmentReliable(response);
+        
+        deleteSegment(response);
+
+        
+        if(!isValidSentMeta){
+            cout << "Can not send MetaData to Client, Terminated " << responseMeta.filename << "Request!" << endl; 
+            return;
+        }
+        ++currentSegment;
+        // if file exists, start sending data
+        if(transferActive && fileSegments.size() > 0) {
+            cout << "\n=== Sending file data to Client by sendNextDataSegment() ===" << endl;
+            sendNextDataSegment();
+        } else {
+            // file doesn't exist, send TYPE_COMPLETE immediately
+            cout << "\n=== File doesn't exist, send TYPE_COMPLETE to Client ===" << endl;
+            MetaData completeMeta;
+            completeMeta.type = TYPE_COMPLETE;
+
+            strcpy(completeMeta.filename, currentFilename.c_str());
+
+            Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
+            complete->header.checkSum = calculateChecksum(complete);
+
+            // mook
+            cout << "[Debug] Sending... ((MetaData*)complete->payload)->type= " << ((MetaData*)complete->payload)->type << endl;
+            // sendSegment(complete);
+            sendSegmentReliable(complete);
+            
+            deleteSegment(complete);
+        }
+    }
+    
+    void sendNextDataSegment() {
+        cout << "[sendNextDataSegment] ";
+        if(currentSegment > fileSegments.size()) {
+            cout << "Segment : " << currentSegment << "[SKIP]" << endl;
+            return;
+        }
+        if(currentSegment == fileSegments.size()) {
+            cout << "All segments sent!" << endl;
+
+            // send completion message
+            waitingForAck = false;
+            sendComplete();
+            transferActive = false;
+            return;
+        }
+
+        // get current segment
+        Segment* seg = fileSegments[currentSegment];
+
+        cout << "Sending data segment " << currentSegment
+             << " (size: " << (seg->header.length - HEADER_SIZE) << " bytes)" << endl;
+
+        // send the segment
+        sendSegment(seg);
+
+        // start timer
+        gettimeofday(&lastSendTime, nullptr);
+        waitingForAck = true;
+    }
+
+    void sendComplete(){
+        MetaData completeMeta;
+        completeMeta.type = TYPE_COMPLETE;
+        strcpy(completeMeta.filename, currentFilename.c_str());
+        
+        Segment* complete = createSegmentWithPayload(&completeMeta, currentSegment, sizeof(MetaData));
+        complete->header.checkSum = calculateChecksum(complete);
+
+        // sendSegment(complete);
+        sendSegmentReliable(complete);
+        
+        deleteSegment(complete);
+    } 
+    
+    void handleAck(Segment* seg) {
+        cout << "Got ACK for segment " << seg->header.seqNumber << endl;
+
+        if(seg->header.seqNumber == currentSegment) {
+            // correct ACK, move to next segment
+            waitingForAck = false;
+            retryCount = 0;
+            currentSegment++;
+
+            if(currentSegment < fileSegments.size()) {
+                sendNextDataSegment();
+            } else {
+                cout << "File transfer complete!" << endl;
+
+                // sendComplete(); USE with sendNextDataSegment() instead
+                sendNextDataSegment();
+                transferActive = false;
+                cleanupSegments();
+            }
+        } else {
+            // wrong ACK sequence
+            cout << "Wrong ACK sequence. Expected: " << currentSegment
+                 << ", Got: " << seg->header.seqNumber << " [IGNORE]" << endl;
+                // sendNextDataSegment();
+        }
+    }
+    
+    void handleNak(Segment* seg) {
+        cout << "Got NAK for segment " << seg->header.seqNumber << endl;
+        
+        // resend current segment
+        if(transferActive) {
+            sendNextDataSegment();
+        }
+    }
+    
+    void sendACK(int seqNum) {
+        MetaData ackMeta;
+        ackMeta.type = TYPE_ACK;
+        
+        Segment* ack = createSegmentWithPayload(&ackMeta, seqNum, sizeof(MetaData));
+        ack->header.checkSum = calculateChecksum(ack);
+        
+        sendSegment(ack);
+        cout << "<<--- Server send ACK for Sequence Number: " << seqNum << endl;
+        
+        deleteSegment(ack);
+    }
+    
+    void sendNAK(int seqNum) {
+        MetaData nakMeta;
+        nakMeta.type = TYPE_NAK;
+        
+        Segment* nak = createSegmentWithPayload(&nakMeta, seqNum, sizeof(MetaData));
+        nak->header.checkSum = calculateChecksum(nak);
+        
+        sendSegment(nak);
+        cout << "Server send NAK for Sequence Number: " << seqNum << endl;
+        
+        deleteSegment(nak);
+    }
+    
+    bool sendSegmentReliable(Segment* seg) {
+        int tryCount = 0;
+        
+        while(tryCount < maxRetries) {
+            cout << "[sendSegmentReliable()]" << endl;
+
+            // send the segment
+            sendSegment(seg);
+            cout << "Sent segment, waiting for ACK..." << endl;
+            
+            setRecvTimeout(timeoutSeconds);
+            
+            // wait for response
+            Segment* response = receiveSegment();
+            
+            if(response) {
+                // verify checksum
+                unsigned short receivedChecksum = response->header.checkSum;
+                response->header.checkSum = 0;
+                unsigned short calculatedChecksum = calculateChecksum(response);
+
+                
+                if(receivedChecksum == calculatedChecksum) {
+                    if(response->header.seqNumber == currentSegment){
+                        MetaData* meta = (MetaData*)response->payload;
+                        if(meta->type == TYPE_ACK) {
+                            cout << "Got ACK!" << endl;
+                            deleteSegment(response);
+                            return true;
+                        } else if(meta->type == TYPE_NAK) {
+                            cout << "Got NAK, retrying..." << endl;
+                        }
+                    }else{
+                        // wrong ACK sequence
+                        cout << "Wrong ACK sequence. Expected: " << currentSegment 
+                            << ", Got: " << response->header.seqNumber << " [IGNORE]" << endl; 
+                    }
+                } else {
+                    cout << "Corrupt response, retrying..." << endl;
+                }
+                
+                deleteSegment(response);
+            } else {
+                cout << "Timeout, retrying..." << endl;
+            }
+            
+            tryCount++;
+        }
+
+        cout << "Failed after " << maxRetries << " tries" << endl;
+        return false;
+    }
+    
+    void cleanupSegments() {
+        for(auto seg : fileSegments) {
+            // don't delete payload as it points to file buffer
+            deleteSegmentKeepPayload(seg);
+        }
+        fileSegments.clear();
+    }
+};
+
+int main(int argc, char* argv[]) {
+    if(argc < 2 || argc > 4) {
+        cout << "Usage: " << argv[0] << " <port> [drop%] [corrupt%]" << endl;
+        cout << "Example: " << argv[0] << " 8080" << endl;
+        cout << "Example: " << argv[0] << " 8080 10 5" << endl;
+        cout << "  drop%    : 0-100 (default 0)" << endl;
+        cout << "  corrupt% : 0-100 (default 0)" << endl;
+        return 1;
+    }
+
+    int port = atoi(argv[1]);
+    int dropPercent = (argc >= 3) ? atoi(argv[2]) : 0;
+    int corruptPercent = (argc >= 4) ? atoi(argv[3]) : 0;
+
+    // validate percentages
+    if(dropPercent < 0 || dropPercent > 100) {
+        cout << "Error: drop% must be between 0-100" << endl;
+        return 1;
+    }
+    if(corruptPercent < 0 || corruptPercent > 100) {
+        cout << "Error: corrupt% must be between 0-100" << endl;
+        return 1;
+    }
+
+    ReliableUDPServer server(port, dropPercent, corruptPercent);
+
+    if(!server.init()) {
+        return 1;
+    }
+
+    server.start();
+
+    return 0;
+}
