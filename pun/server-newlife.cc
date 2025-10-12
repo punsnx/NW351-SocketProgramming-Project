@@ -47,8 +47,8 @@ public:
         transferActive = false;
         waitingForAck = false;
         retryCount = 0;
-        maxRetries = 100;
-        timeoutSeconds = 0.000001;
+        maxRetries = 100000;
+        timeoutSeconds = 0.000005;
         serverSocket = -1;
         currentFileData = nullptr;
         currentFileSize = 0;
@@ -210,6 +210,10 @@ private:
         int totalSize = seg->header.length;
         char* buffer = new char[totalSize];
 
+//         //----debug delete
+//         unsigned short recvChk = seg->header.checkSum;
+// // ----------- debug delete
+
         // copy header
         memcpy(buffer, &seg->header, sizeof(Header));
 
@@ -234,6 +238,37 @@ private:
                (sockaddr*)&clientAddr, clientLen);
 
         cout << "<<--Server sent segment at Sequence Number: " << seg->header.seqNumber << endl;
+       
+       
+//         //--- debug delete
+//             unsigned short calcChk = calculateChecksum(seg);
+           
+//             int psize = seg->header.length - HEADER_SIZE;
+            
+//             cout << "vvvvvvvvvvv" << endl;
+//             // Debug: print checksum
+//             cout << "[DEBUG] Segment " << seg->header.seqNumber 
+//             << " recvChk=" << recvChk 
+//             << " calcChk=" << calcChk << endl;
+//             // Debug: print payload (hex หรือ char)
+//             cout << "[DEBUG] Segment " << seg->header.seqNumber << " payload: ";
+//             char* p = static_cast<char*>(seg->payload);
+//             for (int i = 0; i < psize; ++i) {
+//                     // ถ้าอยากเห็นเป็นตัวอักษร
+//                     cout << p[i];
+//                     // หรือถ้าเป็น binary data: cout << hex << (int)(unsigned char)p[i] << " ";
+//                 }
+//                 cout << endl;
+
+//                 cout << "====" << endl;
+
+//                 unsigned char* q = static_cast<unsigned char*>(seg->payload);
+//                 cout << "[DEBUG] Segment " << seg->header.seqNumber << " payload (hex): ";
+//                 for (int i = 0; i < psize; ++i)
+//                     cout << hex << (int)q[i] << " ";
+//                 cout << dec << endl; // กลับไป decimal
+//                 cout << "^^^^^^^^^^^" << endl;
+// //---debug delete
 
         delete[] buffer;
     }

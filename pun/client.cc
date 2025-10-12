@@ -16,12 +16,12 @@ private:
 
     double timeoutSec = 0.000002;   // default 1s; can be tuned
     int maxRetries = 1000000000;   // retry for requests/NAKs
-    int expectedSeq = -1;
-    
-    
+    int expectedSeq = -1; 
 
     int dropPercent;  
     int corruptPercent;
+
+    int tryCount = 0;
 public:
     ReliableUDPClient(const string& serverIp, int port, int dropP, int corruptP)
     : dropPercent(dropP), corruptPercent(corruptP)
@@ -62,6 +62,10 @@ public:
         setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
 
+    void resetTryCount() {
+        tryCount = 0;
+    }
+
     // ---- wire helpers ----
     bool sendSegment(Segment* seg) {
         // counter++;
@@ -70,6 +74,8 @@ public:
         //     cout << "[SIMULATED DROP] Dropping segment " << seg->header.seqNumber << endl;
         //     return false; // ไม่ส่งออกไป
         // }
+
+
 
         int r = rand() % 100; // ได้ค่า 0-99
         if (r < dropPercent)  {
@@ -131,25 +137,31 @@ public:
     //     return seg;
     // }
 
-    Segment* receiveSegment() {
+    Segment* receiveSegment() {        
+        
         char buffer[sizeof(Header) + MAX_PAYLOAD_SIZE];
 
         // ✅ ตั้งค่า timeout ให้ recvfrom
         struct timeval tv;
         tv.tv_sec = (time_t)timeoutSec; // integer part
-            tv.tv_usec = (suseconds_t)((timeoutSec - tv.tv_sec) * 1e6);
+        tv.tv_usec = (suseconds_t)((timeoutSec - tv.tv_sec) * 1e6);
         if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
             perror("setsockopt failed");
+            tryCount++;
             return nullptr;
         }
-
+        
         sockaddr_in from{};
         socklen_t fromLen = sizeof(from);
-
+        
         int n = recvfrom(sockfd, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromLen);
         if (n <= 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 cout << "[Timeout] No data received within 1 second" << endl;
+                if (tryCount > 0) {
+                   cout << "Retry " << tryCount << "/" << maxRetries << endl;
+                }
+                tryCount++;
             } else {
                 perror("recvfrom error");
             }
@@ -592,26 +604,28 @@ int main(int argc, char* argv[]) {
         for (int i = 5; i < argc; ++i) {
             string fname = argv[i];
             MetaData resp{}; 
-            int retryCount = 0;
-
+            
+            // int retryCount = 0;
 
             // ตื่นมาจัดการ retry หน่อย
             while (!client.requestFile(fname, resp)) {
                 cout << "[ERROR] Failed sending request or waiting first ACK for file: " << fname << ", resent REQUEST..." << endl;
-                retryCount++;
+                // retryCount++;
                 // if (!multiFiles) return 1;
                 // continue;
             }
-            retryCount = 0;
+            // retryCount = 0;
+            client.resetTryCount();
             
             while (!client.receiveMeta(fname, resp)) {
                 cout << "[ERROR] Failed to receive RESPONSE metadata for file: " << fname << endl;
-                retryCount++;
+                // retryCount++;
                 // cout << "Retry " << retryCount << "/" << 
                 // if (!multiFiles) return 1;
                 // continue;
             }
-            retryCount =0;
+            // retryCount =0;
+            client.resetTryCount();
 
             
             

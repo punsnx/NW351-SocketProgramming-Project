@@ -7,7 +7,7 @@ SERVER_SOURCES = server-newlife.cc file-handler.cc checksum.cc packetize.cc
 
 # CLIENT
 CLIENT_TARGET = client.out
-CLIENT_SOURCES = client.cc file-handler.cc checksum.cc packetize.cc
+CLIENT_SOURCES = client-newlife.cc file-handler.cc checksum.cc packetize.cc
 
 .PHONY: all server client clean
 
