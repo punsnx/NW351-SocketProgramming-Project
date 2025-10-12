@@ -522,12 +522,9 @@ private:
             
             // set timeout
             struct timeval tv;
-            // tv.tv_sec = timeoutSeconds;
-            // tv.tv_usec = 0;
-
+            // Split into seconds and microseconds
             tv.tv_sec = (time_t)timeoutSeconds; // integer part
             tv.tv_usec = (suseconds_t)((timeoutSeconds - tv.tv_sec) * 1e6); // fractional part to microseconds
-
             setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             
             // wait for response
