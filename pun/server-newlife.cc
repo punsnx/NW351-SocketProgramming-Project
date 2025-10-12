@@ -47,7 +47,7 @@ public:
         transferActive = false;
         waitingForAck = false;
         retryCount = 0;
-        maxRetries = 100000;
+        maxRetries = 10000;
         timeoutSeconds = 0.000005;
         serverSocket = -1;
         currentFileData = nullptr;
