@@ -14,7 +14,7 @@ pun
 ├── checksum.cc
 ├── client.cc
 ├── clientFiles
-│   └── history.txt
+│   └── file.txt
 ├── client.log
 ├── client.out
 ├── file-handler.cc
@@ -82,7 +82,11 @@ $ make clean
 สร้างโฟลเดอร์ดังต่อไปนี้ใน root directory ของโปรเจก์ (ตรงกับตำแหน่งที่เก็บ binary file ของแต่ละฝั่ง server และ client) ดูได้จากโครงสร้างของโปรเจกต์
 
 - ต้องมี folder ชื่อ **_files_** สำหรับ server เพื่อเก็บไฟล์
+
+![alt text](image-5.png)
 - ต้องมี folder ชื่อ **_clientFiles_** สำหรับ client เพื่อเก็บไฟล์
+
+![alt text](image-6.png)
 
 ### 🔧 การรันโปรแกรมฝั่ง Server
 
@@ -114,46 +118,62 @@ $ make clean
 5. <files> เป็นชื่อไฟล์ที่ต้องการจากร้องขอจาก server (มีได้มากกว่า 1 ไฟล์ ขั้นด้วยช่องว่าง)
 ```
 
-## 🚀ตัวอย่างภาพจำลอง (Mock-up)
 
+## 📜 ตัวอย่างภาพจำลองการทำงาน (Mock-up)
 ภาพแสดงการสื่อสารระหว่าง Client และ Server
-โดยมีการส่งไฟล์ผ่าน Socket และตรวจสอบข้อมูลด้วย Checksum�ารรันโปรแกรม
+โดยมีการส่งไฟล์ผ่าน Socket และตรวจสอบข้อมูลด้วย Checksum การรันโปรแกรม
 
-1. เปิดฝั่ง Server
-   $ ./server.out
+1. เปิดฝั่ง Server เริ่มต้นรับการเชื่อมต่อ
+   $ ./server.out 8080 0 0
 
-รอให้ server เริ่มฟัง (listen) การเชื่อมต่อจาก client
+![alt text](image-14.png)
 
-2. เปิดฝั่ง Client (อีก terminal หนึ่ง)
-   $ ./client.out
-
-เมื่ออทำตามขั้นตอนสำเร็จ จะสามารถเลือกส่งไฟล์/ดาวน์โหลดไฟล์ได้ตามคำสั่งในโปรแกรม
-
-## 📜 ตัวอย่างการทำงาน
-
-Server เริ่มต้นรับการเชื่อมต่อ
-
-แสดงข้อความรอ client
-
+แสดงข้อความรอการเชื่อมต่อจาก client และ
 บันทึก log ลงใน server.log
 
-Client ขอส่งไฟล์
+![alt text](image-17.png)
 
-เลือกไฟล์จากโฟลเดอร์ clientFiles/
+2. เปิดฝั่ง Client ขอไฟล์ (อีก terminal หนึ่ง)
 
-โปรแกรมจะคำนวณ checksum เพื่อยืนยันความถูกต้อง
+   $ ./client.out 8080 0 0 file.txt
+
+(เลือกไฟล์จากโฟลเดอร์ Files/ (กรณีส่งไฟล์ที่มีอยู่))
+
+![alt text](image-18.png)
+
+![alt text](image-15.png)
 
 บันทึก log ลงใน client.log
 
-Server รับไฟล์
+![alt text](image-19.png)
 
-ตรวจสอบ checksum
-
-บันทึกไฟล์ในโฟลเดอร์ Files/
+3. Server ตรวจไฟล์ว่ามีอยู่จริง → ส่ง Metadata RESPONSE 
 
 ตอบกลับสถานะให้ client ทราบ
 
-## 🔍 ตัวอย่างภาพจำลอง (Mock-up)
+![alt text](image-13.png)
+ 
+4. Client รับ RESPONSE แล้วส่ง ACK กลับ
 
-ภาพแสดงการสื่อสารระหว่าง Client และ Server
-โดยมีการส่งไฟล์ผ่าน Socket และตรวจสอบข้อมูลด้วย Checksum
+![alt text](image-20.png)
+
+5. Server ส่งข้อมูลไฟล์ data segment
+
+![alt text](image-22.png)
+
+6. Client รับ segment เก็บบัฟเฟอร์ แล้วส่ง ACK
+
+![alt text](image-23.png) 
+
+7. Server ส่งสัญญาณจบ (COMPLETE) 
+
+![alt text](image-24.png)
+
+8. Client รับ COMPLETE แล้วส่ง ACK  → รวมบัฟเฟอร์และบันทึกเป็น clientFiles/file.txt
+
+![alt text](image-25.png)
+
+![alt text](image-27.png)
+
+![alt text](image-28.png)
+
