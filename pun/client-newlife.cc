@@ -666,13 +666,20 @@ public:
         writeFile(filepath, buf.data(), static_cast<int>(buf.size()));
         cout << "[INFO] File saved to: " << filepath << "\n";
         
+        if(cleanRequest(filename)){
+            cout << "[Debug] Ready to send next file request" << endl;
+            return true;
+        }
+
+    }
+
+    bool cleanRequest(const string& filename) {
         // receive until server not sent anything
         while (true) {
             int limit = 5;
             Segment* seg = receiveSegmentWithLimit(limit);
 
             if (seg == nullptr) {
-                cout << "[Debug] Ready to send next file request" << endl;
                 return true;
             }
 
@@ -681,19 +688,12 @@ public:
             if (meta->type == TYPE_COMPLETE && meta->filename == filename) {
                 cout << "[Debug] clean server" << endl;
                 sendACK(seg->header.seqNumber);
-
-                // cleanup(seg);   // ปิด resource ให้เรียบร้อย
-                // cout << "[Debug] File transfer complete" << endl;
-                // return true;
             }
 
-            cleanup(seg); // กัน memory leak
         }
 
-
-        return true;
     }
-
+    
 
     bool receiveNonExist(const string& filename, MetaData& outRespMeta) {
         cout << "\n=== File Not Exist, Waiting for TYPE_COMPLETE from server for file: " << filename << " ===\n";
@@ -752,11 +752,17 @@ public:
                         cleanup(seg);
                         cout << "[Debug] got TYPE_COMPLETE" << endl; 
                         cout << "[SUCCESS] receiveNonExist success" << endl;
+
+                        if(cleanRequest(filename)){
+                            cout << "[Debug] Ready to send next file request" << endl;
+                        }
+                        
                         return true;
                     }
                 }
             }
-        }       
+        }  
+
     }
 
 
