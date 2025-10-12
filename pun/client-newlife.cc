@@ -14,8 +14,8 @@ private:
     sockaddr_in serverAddr{};
     socklen_t serverLen{};
 
-    double timeoutSec = 0.000004;   // default 1s; can be tuned
-    int maxRetries = 10000;   // retry for requests/NAKs
+    double timeoutSec = 0.000002;   // default 1s; can be tuned
+    int maxRetries = 100000;   // retry for requests/NAKs
     int expectedSeq = -1; 
 
     int dropPercent;  
@@ -55,10 +55,12 @@ public:
         if (sockfd >= 0) close(sockfd);
     }
 
-    void setRecvTimeout(int seconds) {
-        timeval tv{};
-        tv.tv_sec = seconds;
-        tv.tv_usec = 0;
+    void setRecvTimeout(double seconds) {
+        // set timeout
+        struct timeval tv;
+        // Split into seconds and microseconds
+        tv.tv_sec = (time_t)seconds; // integer part
+        tv.tv_usec = (suseconds_t)((seconds - tv.tv_sec) * 1e6); // fractional part to microseconds
         setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
 

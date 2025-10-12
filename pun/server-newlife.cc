@@ -47,8 +47,8 @@ public:
         transferActive = false;
         waitingForAck = false;
         retryCount = 0;
-        maxRetries = 10000;
-        timeoutSeconds = 0.000005;
+        maxRetries = 100000;
+        timeoutSeconds = 0.000001;
         serverSocket = -1;
         currentFileData = nullptr;
         currentFileSize = 0;
@@ -80,6 +80,7 @@ public:
             cout << "Error: Cannot bind to port " << port << endl;
             return false;
         }
+        setRecvTimeout(timeoutSeconds);
         
         cout << "Server listening on port " << port << "..." << endl;
         return true;
@@ -114,6 +115,15 @@ public:
 
 private:
     // ========== TIMER FUNCTIONS ==========
+
+    void setRecvTimeout(double seconds){
+        // set timeout
+        struct timeval tv;
+        // Split into seconds and microseconds
+        tv.tv_sec = (time_t)timeoutSeconds; // integer part
+        tv.tv_usec = (suseconds_t)((timeoutSeconds - tv.tv_sec) * 1e6); // fractional part to microseconds
+        setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    }
 
     bool checkTimeout() {
         struct timeval currentTime;
@@ -520,12 +530,7 @@ private:
             sendSegment(seg);
             cout << "Sent segment, waiting for ACK..." << endl;
             
-            // set timeout
-            struct timeval tv;
-            // Split into seconds and microseconds
-            tv.tv_sec = (time_t)timeoutSeconds; // integer part
-            tv.tv_usec = (suseconds_t)((timeoutSeconds - tv.tv_sec) * 1e6); // fractional part to microseconds
-            setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setRecvTimeout(timeoutSeconds);
             
             // wait for response
             Segment* response = receiveSegment();

@@ -45,11 +45,26 @@ while IFS=' ' read -r client_drop client_corrupt server_drop server_corrupt; do
     sleep 1
     
     # Run client with log redirection in background
+    # Start timer
+    START_TIME=$(date +%s.%N)
     ./client.out 127.0.0.1 $SERVER_PORT $client_drop $client_corrupt $FILES > client.log 2>&1 &
     CLIENT_PID=$!
-    
+
     # Wait for client to finish
     wait $CLIENT_PID
+    CLIENT_EXIT_CODE=$?
+
+    # End timer and calculate elapsed time
+    END_TIME=$(date +%s.%N)
+    ELAPSED_TIME=$(awk "BEGIN {printf \"%.3f\", $END_TIME - $START_TIME}")
+
+    # Write timer result to timer.log
+    if [ $CLIENT_EXIT_CODE -eq 0 ]; then
+        echo "Test: client_drop=$client_drop client_corrupt=$client_corrupt server_drop=$server_drop server_corrupt=$server_corrupt | Status: Completed | Time: ${ELAPSED_TIME}s" > timer.log
+    else
+        echo "Test: client_drop=$client_drop client_corrupt=$client_corrupt server_drop=$server_drop server_corrupt=$server_corrupt | Status: Terminated (exit code: $CLIENT_EXIT_CODE) | Time: ${ELAPSED_TIME}s" > timer.log
+    fi
+
     CLIENT_PID=""
     
     # Kill server after client finishes
@@ -62,6 +77,7 @@ while IFS=' ' read -r client_drop client_corrupt server_drop server_corrupt; do
     # Copy logs and client files
     cp server.log "$TEST_DIR/" 2>/dev/null || echo "server.log not found"
     cp client.log "$TEST_DIR/" 2>/dev/null || echo "client.log not found"
+    cp timer.log "$TEST_DIR/" 2>/dev/null || echo "timer.log not found"
     cp -r clientFiles "$TEST_DIR/" 2>/dev/null || echo "clientFiles not found"
     
     echo "Test completed. Logs saved to $TEST_DIR"

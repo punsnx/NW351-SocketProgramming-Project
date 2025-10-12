@@ -15,7 +15,7 @@ private:
     socklen_t serverLen{};
 
     double timeoutSec = 0.000002;   // default 1s; can be tuned
-    int maxRetries = 10000;   // retry for requests/NAKs
+    int maxRetries = 100000;   // retry for requests/NAKs
     int expectedSeq = -1; 
 
     int dropPercent;  
