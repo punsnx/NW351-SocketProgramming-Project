@@ -480,6 +480,11 @@ public:
             }
             cleanup(seg);
         }
+
+            if(handleNextProcess(filename)){
+                cout << "[Debug] Ready for next process." << endl;
+            return true;
+        }
     }
 
     // bool receiveFile(const string& filename, int totalSegments) {
@@ -666,14 +671,14 @@ public:
         writeFile(filepath, buf.data(), static_cast<int>(buf.size()));
         cout << "[INFO] File saved to: " << filepath << "\n";
         
-        if(cleanRequest(filename)){
+        if(handleNextProcess(filename)){
             cout << "[Debug] Ready to send next file request" << endl;
             return true;
         }
 
     }
 
-    bool cleanRequest(const string& filename) {
+    bool handleNextProcess(const string& filename) {
         // receive until server not sent anything
         while (true) {
             int limit = 5;
@@ -685,14 +690,25 @@ public:
 
             MetaData* meta = (MetaData*)seg->payload;
 
-            if (meta->type == TYPE_COMPLETE && meta->filename == filename) {
-                cout << "[Debug] clean server" << endl;
-                sendACK(seg->header.seqNumber);
+            if (meta->filename == filename) {
+                switch(meta->type) {
+                    case TYPE_COMPLETE:
+                        cout << "[Debug] server clear" << endl;
+                        sendACK(seg->header.seqNumber);  
+                    case TYPE_ACK:
+                        continue;
+                        
+                    case TYPE_REQUEST:
+                        sendACK(seg->header.seqNumber);
+                        continue;
+                        
+                    default:
+                        cout << "Unknown type in segment" << endl;
+                }
             }
-
         }
-
     }
+  
     
 
     bool receiveNonExist(const string& filename, MetaData& outRespMeta) {
@@ -753,10 +769,10 @@ public:
                         cout << "[Debug] got TYPE_COMPLETE" << endl; 
                         cout << "[SUCCESS] receiveNonExist success" << endl;
 
-                        if(cleanRequest(filename)){
+                        if(handleNextProcess(filename)){
                             cout << "[Debug] Ready to send next file request" << endl;
                         }
-                        
+
                         return true;
                     }
                 }
