@@ -15,7 +15,7 @@
 ```
 
 ## Video
-- link : https://youtube.com/
+- link : https://www.youtube.com/watch?v=7tMxSTRXXgA&feature=youtu.be
 ## 📁 โครงสร้างไฟล์ของโปรเจกต์
 
 ```
